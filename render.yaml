@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: fatbot-copytrading-mvp
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: HYDROMANCER_API_KEY
+        sync: false
+      - key: HYDROMANCER_LEADERBOARD_WINDOW
+        value: 30d
+      - key: HYDROMANCER_LEADERBOARD_SORT_BY
+        value: totalPnl
+      - key: HYDROMANCER_LEADERBOARD_LIMIT
+        value: "50"

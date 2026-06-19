@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FatBot Copytrading MVP</title>
+  <link rel="stylesheet" href="/static/styles.css?v=render1" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">FAT<br>BOT</div>
+
+    <nav class="dock" aria-label="Main navigation">
+      <button class="dock-item">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5"/><path d="M6.5 9.5V20h11V9.5"/></svg>
+        </span>
+        <em>Home</em>
+      </button>
+      <button class="dock-item">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="5.5"/><path d="m16 16 4 4"/></svg>
+        </span>
+        <em>FatScreener</em>
+      </button>
+      <button class="dock-item">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2.5"/><path d="M8 5v14"/><path d="M16 5v14"/></svg>
+        </span>
+        <em>Trenches</em>
+      </button>
+      <button class="dock-item">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7.5h15"/><path d="M7 7.5V5.8A1.8 1.8 0 0 1 8.8 4h6.4A1.8 1.8 0 0 1 17 5.8v1.7"/><rect x="4.5" y="7.5" width="15" height="11.5" rx="2"/></svg>
+        </span>
+        <em>Portfolio</em>
+      </button>
+      <button class="dock-item">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5v15"/><path d="M4.5 12h15"/><circle cx="12" cy="12" r="6.2"/></svg>
+        </span>
+        <em>Sniping 2.0</em>
+      </button>
+      <button class="dock-item">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16.5 9.2 12l3.2 3.2L19 8.5"/><path d="M15 8.5h4v4"/></svg>
+        </span>
+        <em>Perps</em>
+      </button>
+      <button class="dock-item">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.6 5.3 5.9.9-4.2 4.1 1 5.7L12 16.2 6.7 19l1-5.7L3.5 9.2l5.9-.9L12 3Z"/></svg>
+        </span>
+        <em>Airdrop</em>
+      </button>
+      <button class="dock-item active">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 16c1.8-5 4.6-8.2 8.8-10"/><path d="M14 6h2.8v2.8"/><path d="M7 8.8H4.8V6H7"/><path d="M7 18v-2.8H4.8V18"/></svg>
+        </span>
+        <em>Copytrading</em>
+      </button>
+    </nav>
+
+    <div class="right-actions">
+      <button class="circle-btn" aria-label="Menu">☰</button>
+      <button class="connect-btn">CONNECT WALLET</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="left-col">
+      <div class="panel leaderboard-panel fill-panel">
+        <div class="leaderboard-top">
+          <div>
+            <h1>PnL Leaderboard</h1>
+            <p>Ranked by external PnL leaderboard data.</p>
+          </div>
+          <span class="pill">LIVE DATA</span>
+        </div>
+
+        <div class="leaderboard-tabs" role="tablist">
+          <button class="leader-tab active" data-leader-tab="global">Global Leaderboard</button>
+          <button class="leader-tab" data-leader-tab="favourite">Favourite</button>
+          <button class="leader-tab" data-leader-tab="copied">Copied Wallets</button>
+        </div>
+
+        <div id="leaderboardHint" class="leaderboard-hint">Global PnL leaderboard sorted by provider data.</div>
+        <div id="traderList" class="trader-list loading">Loading traders...</div>
+      </div>
+    </section>
+
+    <section class="middle-col">
+      <div class="panel allocation-panel">
+        <div class="panel-head small">
+          <h2>PnL Allocation</h2>
+          <span class="pill">DEMO</span>
+        </div>
+        <div class="donut-wrap">
+          <div class="donut"><span id="allocPct">48%</span></div>
+          <div class="legend">
+            <div><i class="dot purple"></i><span>Single Trader Copy</span><strong id="allocSingle">$0.00</strong></div>
+            <div><i class="dot yellow"></i><span>Multi Copy</span><strong id="allocPool">$0.00</strong></div>
+            <div><i class="dot green"></i><span>Available</span><strong id="allocAvailable">$0.00</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="metrics-panel">
+        <div class="metric-card">
+          <span>Total copy wallet value</span>
+          <strong id="metricValue">$0.00</strong>
+          <em id="metricPnl">+$0.00</em>
+        </div>
+        <div class="metric-card">
+          <span>Active wallets</span>
+          <strong id="metricWallets">0</strong>
+          <em>single + multi</em>
+        </div>
+        <div class="metric-card">
+          <span>Avg drift</span>
+          <strong id="metricDrift">0.0%</strong>
+          <em>target vs actual</em>
+        </div>
+      </div>
+
+      <div class="panel copy-section-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Single Copytrading</h2>
+            <p>Copy one selected trader per wallet. Maximum 5 single copy wallets.</p>
+          </div>
+          <span id="singleLimit" class="limit-pill">0 / 5</span>
+        </div>
+        <div id="singleCopyList" class="copy-wallet-section loading">Loading wallets...</div>
+      </div>
+
+      <div class="panel copy-section-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Multi Copytrading</h2>
+            <p>Copy a basket of selected traders into one wallet. Maximum 3 multi copy wallets.</p>
+          </div>
+          <span id="multiLimit" class="limit-pill">0 / 3</span>
+        </div>
+        <div id="multiCopyList" class="copy-wallet-section loading">Loading wallets...</div>
+      </div>
+    </section>
+
+    <section class="right-col">
+      <div class="panel multi-leaderboard-panel right-half-panel">
+        <div class="panel-head small">
+          <div>
+            <h2>Multi Copytrading Leaderboard</h2>
+            <p>Created multi wallets ranked by PnL.</p>
+          </div>
+          <span class="pill">LIVE</span>
+        </div>
+        <div id="multiLeaderboard" class="multi-leaderboard-list loading">Loading multi leaderboard...</div>
+      </div>
+
+      <div class="panel live-feed-panel right-half-panel">
+        <div class="panel-head small">
+          <div>
+            <h2>Live Trader Feed</h2>
+            <p>Trades and activity from all copytrading wallets.</p>
+          </div>
+          <span class="pill green">LIVE</span>
+        </div>
+        <div id="liveTraderFeed" class="trade-feed-list loading">Loading live trader feed...</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="traderModal" class="modal hidden">
+    <div class="modal-card large">
+      <button class="modal-close" data-close="traderModal">×</button>
+      <div id="traderModalContent"></div>
+    </div>
+  </div>
+
+  <div id="copyModal" class="modal hidden">
+    <div class="modal-card">
+      <button class="modal-close" data-close="copyModal">×</button>
+      <div class="wizard-head">
+        <span class="pill">COPYTRADING WALLET</span>
+        <h2>Create Copy Wallet</h2>
+        <p id="copyModalTrader">Generate wallet, configure multiplier and activate copy mode.</p>
+      </div>
+      <div id="wizardStep" class="wizard-step"></div>
+      <div class="wizard-actions">
+        <button id="wizardBack" class="secondary">Back</button>
+        <button id="wizardNext" class="primary">Generate Wallet</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=render1"></script>
+</body>
+</html>
