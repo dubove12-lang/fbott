@@ -1,0 +1,1 @@
+Upload your FatBot logo here as fatbot-logo.png. It will be served as /static/assets/fatbot-logo.png

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FatBot Copytrading MVP</title>
-  <link rel="stylesheet" href="/static/styles.css?v=render1" />
+  <link rel="stylesheet" href="/static/styles.css?v=60" />
 </head>
 <body>
   <header class="topbar">
@@ -53,11 +53,17 @@
         </span>
         <em>Airdrop</em>
       </button>
-      <button class="dock-item active">
+      <button class="dock-item active" data-main-view="copytrading">
         <span class="dock-svg" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 16c1.8-5 4.6-8.2 8.8-10"/><path d="M14 6h2.8v2.8"/><path d="M7 8.8H4.8V6H7"/><path d="M7 18v-2.8H4.8V18"/></svg>
         </span>
         <em>Copytrading</em>
+      </button>
+      <button class="dock-item" data-main-view="fatbot-vaults">
+        <span class="dock-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 10.5 12 6l5.5 4.5v7A1.5 1.5 0 0 1 16 19H8a1.5 1.5 0 0 1-1.5-1.5v-7Z"/><path d="M9 13h6"/><path d="M9.5 16h5"/></svg>
+        </span>
+        <em>FatBot Vaults</em>
       </button>
     </nav>
 
@@ -79,12 +85,61 @@
         </div>
 
         <div class="leaderboard-tabs" role="tablist">
-          <button class="leader-tab active" data-leader-tab="global">Global Leaderboard</button>
+          <button class="leader-tab active" data-leader-tab="top">Top Traders</button>
+          <button class="leader-tab" data-leader-tab="fatbot">FatBot Vaults</button>
           <button class="leader-tab" data-leader-tab="favourite">Favourite</button>
-          <button class="leader-tab" data-leader-tab="copied">Copied Wallets</button>
+          <button class="leader-tab" data-leader-tab="my">My Copytrading</button>
         </div>
 
-        <div id="leaderboardHint" class="leaderboard-hint">Global PnL leaderboard sorted by provider data.</div>
+        <div class="leaderboard-filter-bar" id="leaderboardFilterBar">
+          <label>
+            <span>Timeframe</span>
+            <select id="filterWindow">
+              <option value="1d">1D</option>
+              <option value="7d">7D</option>
+              <option value="30d" selected>30D</option>
+              <option value="90d">90D</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+          <label>
+            <span>Sort by</span>
+            <select id="filterSortBy">
+              <option value="totalPnl" selected>PnL</option>
+              <option value="volume">Volume</option>
+              <option value="winRate">Win Rate</option>
+            </select>
+          </label>
+          <label>
+            <span>Min trades</span>
+            <select id="filterMinTrades">
+              <option value="0" selected>0</option>
+              <option value="10">10</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+          <label>
+            <span>Min active days</span>
+            <select id="filterMinDays">
+              <option value="0" selected>0</option>
+              <option value="3">3</option>
+              <option value="7">7</option>
+              <option value="14">14</option>
+              <option value="30">30</option>
+            </select>
+          </label>
+          <label>
+            <span>Limit</span>
+            <select id="filterLimit">
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="leaderboardHint" class="leaderboard-hint">Top traders ranked by external PnL leaderboard data.</div>
         <div id="traderList" class="trader-list loading">Loading traders...</div>
       </div>
     </section>
@@ -123,24 +178,24 @@
         </div>
       </div>
 
-      <div class="panel copy-section-panel">
+      <div id="singleSectionPanel" class="panel copy-section-panel">
         <div class="panel-head">
           <div>
-            <h2>Single Copytrading</h2>
-            <p>Copy one selected trader per wallet. Maximum 5 single copy wallets.</p>
+            <h2 id="singleSectionTitle">Single Copytrading</h2>
+            <p id="singleSectionText">Copy one selected trader per wallet. Maximum 10 single copy wallets.</p>
           </div>
-          <span id="singleLimit" class="limit-pill">0 / 5</span>
+          <span id="singleLimit" class="limit-pill">0 / 10</span>
         </div>
         <div id="singleCopyList" class="copy-wallet-section loading">Loading wallets...</div>
       </div>
 
-      <div class="panel copy-section-panel">
+      <div id="multiSectionPanel" class="panel copy-section-panel">
         <div class="panel-head">
           <div>
-            <h2>Multi Copytrading</h2>
-            <p>Copy a basket of selected traders into one wallet. Maximum 3 multi copy wallets.</p>
+            <h2 id="multiSectionTitle">FatBot Vaults</h2>
+            <p id="multiSectionText">Create or manage FatBot vault copy indexes. Maximum 5 vaults.</p>
           </div>
-          <span id="multiLimit" class="limit-pill">0 / 3</span>
+          <span id="multiLimit" class="limit-pill">0 / 5</span>
         </div>
         <div id="multiCopyList" class="copy-wallet-section loading">Loading wallets...</div>
       </div>
@@ -159,10 +214,13 @@
       </div>
 
       <div class="panel live-feed-panel right-half-panel">
-        <div class="panel-head small">
-          <div>
-            <h2>Live Trader Feed</h2>
-            <p>Trades and activity from all copytrading wallets.</p>
+        <div class="panel-head small live-feed-head">
+          <div class="live-feed-title-wrap">
+            <img id="liveFeedSourceLogo" class="feed-source-logo" src="/static/assets/hyperliquid-logo.png" alt="HL" />
+            <div>
+              <h2 id="liveFeedTitle">Live copytrading trades feed</h2>
+              <p id="liveFeedSubtitle">Trades and activity from single copytrading wallets.</p>
+            </div>
           </div>
           <span class="pill green">LIVE</span>
         </div>
@@ -194,6 +252,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=render1"></script>
+  <script src="/static/app.js?v=60"></script>
 </body>
 </html>

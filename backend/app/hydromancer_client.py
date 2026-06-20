@@ -103,7 +103,7 @@ class HydromancerClient:
             return [x for x in data if isinstance(x, dict)]
 
         if isinstance(data, dict):
-            for key in ("users", "leaders", "leaderboard", "rows", "data", "result"):
+            for key in ("users", "leaders", "leaderboard", "rows", "data", "result", "items", "pnlLeaderboard", "userPnlLeaderboard"):
                 value = data.get(key)
                 if isinstance(value, list):
                     return [x for x in value if isinstance(x, dict)]
@@ -112,7 +112,7 @@ class HydromancerClient:
             for outer in ("data", "result"):
                 nested = data.get(outer)
                 if isinstance(nested, dict):
-                    for key in ("users", "leaders", "leaderboard", "rows"):
+                    for key in ("users", "leaders", "leaderboard", "rows", "items"):
                         value = nested.get(key)
                         if isinstance(value, list):
                             return [x for x in value if isinstance(x, dict)]
@@ -146,6 +146,14 @@ def as_int(value: Any, default: int = 0) -> int:
 
 
 def normalize_leaderboard_row(row: Dict[str, Any], rank: int) -> Dict[str, Any]:
+    """
+    Real userPnlLeaderboard fields observed from Hydromancer:
+      user, totalPnl, volumeTraded, totalTrades, winRate, totalFees,
+      totalFunding, daysActive, accountAgeDays, humanScore, tradedPairs
+
+    winRate is returned as a decimal ratio, e.g. 0.7857 = 78.57%.
+    Most monetary values are string decimals and are converted to float.
+    """
     address = first_present(
         row,
         (
@@ -156,45 +164,64 @@ def normalize_leaderboard_row(row: Dict[str, Any], rank: int) -> Dict[str, Any]:
             "account",
             "userAddress",
             "trader",
+            "accountAddress",
         ),
         "",
     )
 
-    total_pnl = as_float(first_present(row, ("totalPnl", "pnl", "realizedPnl", "realized_pnl", "profit", "totalProfit"), 0))
-    pnl_30d = as_float(first_present(row, ("pnl30d", "pnl_30d", "roi30d", "roi", "returnPct", "pnlPct"), 0))
-    pnl_90d = as_float(first_present(row, ("pnl90d", "pnl_90d", "roi90d"), pnl_30d))
-    volume = as_float(first_present(row, ("volume", "tradedVolume", "totalVolume", "notionalVolume"), 0))
-    win_rate = as_float(first_present(row, ("winRate", "win_rate", "winrate"), 0))
-    trades = as_int(first_present(row, ("trades", "numTrades", "tradeCount", "nTrades"), 0))
-    days_active = as_int(first_present(row, ("daysActive", "activeDays", "minDaysActive"), 0))
+    total_pnl = as_float(first_present(row, ("totalPnl", "totalPNL", "pnl", "realizedPnl", "realized_pnl", "profit", "totalProfit", "cumPnl", "cumulativePnl"), 0))
+    volume = as_float(first_present(row, ("volumeTraded", "volume", "tradedVolume", "totalVolume", "notionalVolume"), 0))
+    fees = as_float(first_present(row, ("totalFees", "fees", "totalFee"), 0))
+    funding = as_float(first_present(row, ("totalFunding", "funding", "fundingPnl"), 0))
+    trades = as_int(first_present(row, ("totalTrades", "trades", "numTrades", "tradeCount", "nTrades"), 0))
+    days_active = as_int(first_present(row, ("daysActive", "activeDays"), 0))
+    account_age_days = as_int(first_present(row, ("accountAgeDays", "ageDays"), 0))
+    human_score = as_float(first_present(row, ("humanScore",), 0))
+    win_rate_raw = as_float(first_present(row, ("winRate", "win_rate", "winrate"), 0))
+    win_rate_pct = win_rate_raw * 100 if 0 <= win_rate_raw <= 1 else win_rate_raw
+    traded_pairs = first_present(row, ("tradedPairs", "pairs", "coins", "markets"), []) or []
+    if not isinstance(traded_pairs, list):
+        traded_pairs = []
 
-    # PnL-only MVP score. Later we replace this with the FatBot copy score.
-    # We keep it deterministic and simple, so leaderboard order remains PnL-led.
+    # Keep score only as rank helper for legacy frontend; do not present it as recommendation logic.
     score = max(1, min(99, int(100 - rank * 1.7)))
 
-    if total_pnl >= 250_000:
-        risk = "High"
-    elif win_rate and win_rate >= 65:
-        risk = "Low"
-    else:
-        risk = "Medium"
+    # We keep risk as neutral placeholder for legacy schema compatibility only.
+    risk = "External"
+
+    roi_proxy = 0.0
+    # No account value is returned by userPnlLeaderboard, so ROI cannot be computed from this endpoint alone.
+    # We keep pnl_30d as total_pnl for sorting/legacy UI compatibility when selected window is 30d.
+    pnl_window = total_pnl
 
     return {
         "address": str(address),
         "label": "Hydromancer PnL leaderboard",
         "score": score,
-        "pnl_30d": pnl_30d,
-        "pnl_90d": pnl_90d,
+        "rank": rank,
+        "pnl_30d": pnl_window,
+        "pnl_90d": pnl_window,
         "account_value": as_float(first_present(row, ("accountValue", "account_value", "equity", "marginSummaryAccountValue"), 0)),
         "open_positions": as_int(first_present(row, ("openPositions", "open_positions", "positions"), 0)),
         "drawdown": as_float(first_present(row, ("drawdown", "maxDrawdown", "max_drawdown"), 0)),
         "risk": risk,
-        "win_rate": win_rate,
+        "win_rate": win_rate_pct,
         "gross_exposure": as_float(first_present(row, ("grossExposure", "gross_exposure"), 0)),
+        "net_exposure": as_float(first_present(row, ("netExposure", "net_exposure"), 0)),
         "total_pnl": total_pnl,
         "volume": volume,
+        "volume_traded": volume,
+        "fees": fees,
+        "total_fees": fees,
+        "funding": funding,
+        "total_funding": funding,
         "trades": trades,
+        "total_trades": trades,
         "days_active": days_active,
+        "account_age_days": account_age_days,
+        "human_score": human_score,
+        "traded_pairs": traded_pairs,
+        "traded_pairs_count": len(traded_pairs),
         "source": "hydromancer",
         "raw": row,
     }

@@ -1103,3 +1103,735 @@ p { line-height: 1.45; font-size: 14px; }
   opacity: .55;
   cursor: not-allowed;
 }
+
+
+/* v23 Hydromancer UI fix */
+.trader-row.hydro-trader-row {
+  grid-template-columns: 28px 46px minmax(0, 1.15fr) .45fr .8fr .78fr .45fr auto;
+}
+.pairs-box {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.06);
+}
+.pairs-box strong {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.45;
+}
+.modal-note {
+  margin-top: 10px;
+}
+.hydro-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 1300px) {
+  .optional-leader-col {
+    display: none;
+  }
+  .trader-row.hydro-trader-row {
+    grid-template-columns: 28px 46px minmax(0,1fr) .45fr .8fr auto;
+  }
+}
+@media (max-width: 800px) {
+  .hydro-detail-grid,
+  .trader-row.hydro-trader-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v24 left leaderboard scroll fix */
+.app-grid,
+.dashboard-grid,
+.main-grid {
+  align-items: start;
+}
+
+.left-col {
+  min-height: 0;
+}
+
+.left-col .leaderboard-panel,
+.leaderboard-panel {
+  height: calc(100vh - 150px);
+  max-height: calc(100vh - 150px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#traderList,
+.trader-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  overscroll-behavior: contain;
+}
+
+#traderList::-webkit-scrollbar,
+.trader-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+#traderList::-webkit-scrollbar-track,
+.trader-list::-webkit-scrollbar-track {
+  background: rgba(255,255,255,.04);
+  border-radius: 999px;
+}
+
+#traderList::-webkit-scrollbar-thumb,
+.trader-list::-webkit-scrollbar-thumb {
+  background: rgba(139,93,255,.55);
+  border-radius: 999px;
+}
+
+#traderList::-webkit-scrollbar-thumb:hover,
+.trader-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(139,93,255,.78);
+}
+
+/* keep rows compact enough for 50-wallet Hydromancer lists */
+.trader-row.hydro-trader-row {
+  min-height: 68px;
+}
+
+/* prevent the page itself from stretching because of the left leaderboard */
+body {
+  overflow-x: hidden;
+}
+
+
+/* v25 trader profile cleanup + HL positions */
+.trader-live-position-row {
+  grid-template-columns: 40px minmax(0,1fr) repeat(5, minmax(0,.72fr));
+}
+@media (max-width: 900px) {
+  .trader-live-position-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v27 allMids live price */
+.trader-live-position-row {
+  grid-template-columns: 40px minmax(0,1fr) repeat(6, minmax(0,.68fr));
+}
+
+
+/* v28 trader profile cleanup + CoinGecko icons */
+.trader-profile-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.trader-head-copy {
+  margin-top: 0;
+  flex: 0 0 auto;
+  min-width: 170px;
+}
+.coin-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  object-fit: cover;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.08);
+  padding: 4px;
+}
+.trader-live-position-row {
+  grid-template-columns: 40px minmax(0,1fr) repeat(5, minmax(0,.72fr));
+}
+@media (max-width: 900px) {
+  .trader-profile-head {
+    flex-direction: column;
+  }
+  .trader-head-copy {
+    width: 100%;
+  }
+  .trader-live-position-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v30 position side coloring */
+.coin-side.long-side {
+  color: var(--green);
+  text-shadow: 0 0 18px rgba(32,228,151,.18);
+}
+.coin-side.short-side {
+  color: var(--red);
+  text-shadow: 0 0 18px rgba(255,101,127,.18);
+}
+
+
+/* v32 leaderboard tabs + provider logos */
+.leaderboard-tabs {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.leader-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-weight: 950;
+  font-size: 12px;
+  letter-spacing: .02em;
+  border: 1px solid rgba(255,255,255,.10);
+  flex: 0 0 auto;
+}
+.hl-logo {
+  color: #06111f;
+  background: linear-gradient(180deg, #d7f8ff, #71d9ff);
+  box-shadow: 0 12px 24px rgba(113,217,255,.13);
+}
+.fatbot-logo {
+  color: #0b0711;
+  background: linear-gradient(180deg, #ffe46b, #ff9f1a);
+  box-shadow: 0 12px 24px rgba(255,200,48,.14);
+  overflow: hidden;
+}
+.fatbot-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 5px;
+}
+.fatbot-vault-row {
+  border-color: rgba(255, 216, 70, .10);
+}
+@media (max-width: 900px) {
+  .leaderboard-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
+/* v33 provider logos from assets + modal header logo */
+.hl-logo {
+  overflow: hidden;
+}
+.hl-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 5px;
+}
+.profile-provider-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  font-size: 13px;
+}
+.profile-provider-logo img {
+  padding: 5px;
+}
+
+
+/* v34 provider logos fill the whole badge */
+.leader-logo {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.leader-logo img,
+.hl-logo img,
+.fatbot-logo img {
+  width: 100% !important;
+  height: 100% !important;
+  padding: 0 !important;
+  object-fit: cover !important;
+  display: block;
+  border-radius: inherit;
+}
+
+.profile-provider-logo img {
+  padding: 0 !important;
+  object-fit: cover !important;
+}
+
+/* Keep text fallback centered when image is missing */
+.leader-logo:not(:has(img)) {
+  display: grid;
+  place-items: center;
+}
+
+
+/* v35 logo zoom/fill refinement */
+.leader-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+}
+
+.leader-logo img,
+.hl-logo img,
+.fatbot-logo img {
+  transform: scale(1.18);
+  transform-origin: center;
+}
+
+/* HL mark still had visible inner space; zoom a little more */
+.hl-logo img {
+  transform: scale(1.28);
+}
+
+/* FatBot logo usually has more empty margin in the PNG */
+.fatbot-logo img {
+  transform: scale(1.22);
+}
+
+/* Profile/modal logo should match the same crop feeling */
+.profile-provider-logo img {
+  transform: scale(1.18);
+}
+.profile-provider-logo.hl-logo img {
+  transform: scale(1.28);
+}
+.profile-provider-logo.fatbot-logo img {
+  transform: scale(1.22);
+}
+
+
+/* v41 top nav FatBot Vaults snapshot tab */
+.dock {
+  max-width: min(980px, calc(100vw - 340px));
+  overflow: visible;
+}
+
+.dock-item {
+  min-width: 86px;
+}
+
+.dock-item em {
+  white-space: nowrap;
+}
+
+@media (max-width: 1280px) {
+  .dock {
+    max-width: min(920px, calc(100vw - 280px));
+    gap: 4px;
+    padding-inline: 8px;
+  }
+  .dock-item {
+    min-width: 76px;
+  }
+  .dock-item em {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 980px) {
+  .dock {
+    overflow-x: auto;
+    justify-content: flex-start;
+    max-width: calc(100vw - 120px);
+  }
+}
+
+
+/* v42 instant profile modal loading state */
+.profile-loading-card {
+  margin-top: 22px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.045);
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.mini-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 3px solid rgba(255,255,255,.16);
+  border-top-color: var(--purple);
+  animation: spin .8s linear infinite;
+  flex: 0 0 auto;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+
+/* v44 Copytrading/FatBot Vaults section switching */
+#singleSectionPanel[style*="display: none"],
+#multiSectionPanel[style*="display: none"] {
+  display: none !important;
+}
+
+
+/* v46 wallet section source logos */
+.copy-wallet-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+  flex: 0 0 auto;
+}
+
+.copy-wallet-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* same zoom/crop style as leaderboard logos */
+.copy-wallet-logo.hl-wallet-logo img {
+  transform: scale(1.28);
+}
+
+.copy-wallet-logo.fatbot-wallet-logo img {
+  transform: scale(1.22);
+}
+
+.copy-wallet-logo.logo-fallback::after {
+  content: attr(data-fallback);
+  font-size: 12px;
+  font-weight: 900;
+  color: #fff;
+  letter-spacing: .04em;
+}
+
+
+
+
+/* v48 clean empty slot layout */
+.start-copy-card.slot-card {
+  width: 100%;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 34px 42px 1fr 46px;
+  align-items: center;
+  column-gap: 14px;
+  padding: 12px 14px;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px dashed rgba(255, 134, 205, .28);
+  background:
+    linear-gradient(90deg, rgba(255, 97, 178, .075), rgba(255, 97, 178, .035)),
+    rgba(255,255,255,.035);
+}
+
+.start-copy-card.slot-card:hover {
+  background:
+    linear-gradient(90deg, rgba(255, 97, 178, .12), rgba(255, 97, 178, .055)),
+    rgba(255,255,255,.05);
+  border-color: rgba(255, 134, 205, .42);
+}
+
+.start-copy-card.slot-card .slot-index {
+  grid-column: 1;
+  justify-self: center;
+  align-self: center;
+}
+
+.start-copy-card.slot-card .copy-wallet-logo {
+  grid-column: 2;
+  justify-self: start;
+  align-self: center;
+  margin: 0;
+}
+
+.start-copy-card.slot-card strong {
+  grid-column: 3;
+  justify-self: start;
+  align-self: center;
+  margin: 0;
+  line-height: 1;
+  display: block;
+}
+
+.start-copy-card.slot-card .plus-mark {
+  grid-column: 4;
+  justify-self: end;
+  align-self: center;
+  margin: 0;
+}
+
+
+/* v49 final empty slot alignment: same visual height as filled slots, one centered row */
+.copy-wallet-section .start-copy-card.slot-card {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: 64px !important;
+  min-height: 64px !important;
+  max-height: 64px !important;
+  padding: 0 14px !important;
+  display: grid !important;
+  grid-template-columns: 34px 42px minmax(0, 1fr) 46px !important;
+  grid-template-rows: 64px !important;
+  align-items: center !important;
+  justify-items: start !important;
+  column-gap: 14px !important;
+  text-align: left !important;
+  border-radius: 16px !important;
+  border: 1px dashed rgba(255, 134, 205, .42) !important;
+  background:
+    linear-gradient(90deg, rgba(255, 97, 178, .14), rgba(255, 97, 178, .075)),
+    rgba(255,255,255,.045) !important;
+}
+
+.copy-wallet-section .start-copy-card.slot-card:hover {
+  background:
+    linear-gradient(90deg, rgba(255, 97, 178, .18), rgba(255, 97, 178, .095)),
+    rgba(255,255,255,.06) !important;
+  border-color: rgba(255, 134, 205, .58) !important;
+}
+
+.copy-wallet-section .start-copy-card.slot-card .slot-index {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  align-self: center !important;
+  justify-self: center !important;
+  margin: 0 !important;
+}
+
+.copy-wallet-section .start-copy-card.slot-card .copy-wallet-logo {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  align-self: center !important;
+  justify-self: start !important;
+  margin: 0 !important;
+}
+
+.copy-wallet-section .start-copy-card.slot-card strong {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+  align-self: center !important;
+  justify-self: start !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: block !important;
+  line-height: 1 !important;
+  transform: none !important;
+}
+
+.copy-wallet-section .start-copy-card.slot-card .plus-mark {
+  grid-column: 4 !important;
+  grid-row: 1 !important;
+  align-self: center !important;
+  justify-self: end !important;
+  margin: 0 !important;
+}
+
+
+/* v50 exact height match with filled wallet rows */
+.copy-wallet-section .start-copy-card.slot-card {
+  height: 76px !important;
+  min-height: 76px !important;
+  max-height: 76px !important;
+  grid-template-rows: 76px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.copy-wallet-section .start-copy-card.slot-card .slot-index,
+.copy-wallet-section .start-copy-card.slot-card .copy-wallet-logo,
+.copy-wallet-section .start-copy-card.slot-card strong,
+.copy-wallet-section .start-copy-card.slot-card .plus-mark {
+  align-self: center !important;
+}
+
+
+/* v51 empty slot green tint */
+.copy-wallet-section .start-copy-card.slot-card {
+  border-color: rgba(56, 255, 178, .34) !important;
+  background:
+    linear-gradient(90deg, rgba(36, 255, 177, .115), rgba(36, 255, 177, .055)),
+    rgba(255,255,255,.045) !important;
+}
+
+.copy-wallet-section .start-copy-card.slot-card:hover {
+  border-color: rgba(56, 255, 178, .52) !important;
+  background:
+    linear-gradient(90deg, rgba(36, 255, 177, .16), rgba(36, 255, 177, .075)),
+    rgba(255,255,255,.06) !important;
+}
+
+
+/* v52 trader modal header spacing: prevent copy button overlap with X close */
+.trader-profile-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: start !important;
+  gap: 18px !important;
+  padding-right: 42px !important;
+  position: relative !important;
+}
+
+.trader-head-copy {
+  justify-self: end !important;
+  align-self: start !important;
+  margin-right: 0 !important;
+  transform: none !important;
+  white-space: nowrap !important;
+}
+
+.modal-close,
+button[data-close="traderModal"] {
+  position: absolute !important;
+  top: 18px !important;
+  right: 18px !important;
+  z-index: 5 !important;
+}
+
+@media (max-width: 760px) {
+  .trader-profile-head {
+    grid-template-columns: 1fr !important;
+    padding-right: 42px !important;
+  }
+
+  .trader-head-copy {
+    justify-self: start !important;
+    margin-top: 10px !important;
+  }
+}
+
+
+/* v53 Hydromancer leaderboard filters */
+.leaderboard-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 8px;
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.06);
+}
+
+.leaderboard-filter-bar label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.leaderboard-filter-bar label span {
+  font-size: 10px;
+  font-weight: 850;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.leaderboard-filter-bar select {
+  height: 34px;
+  width: 100%;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(33, 27, 43, .92);
+  color: #fff;
+  border-radius: 12px;
+  padding: 0 10px;
+  font-weight: 850;
+  outline: none;
+}
+
+.leaderboard-filter-bar select:focus {
+  border-color: rgba(139,93,255,.65);
+  box-shadow: 0 0 0 3px rgba(139,93,255,.16);
+}
+
+@media (max-width: 1200px) {
+  .leaderboard-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .leaderboard-filter-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v58 exposure empty-state note */
+.position-note {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 750;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.045);
+  border: 1px solid rgba(255,255,255,.06);
+}
+
+
+/* v60 feed source logos and token images */
+.live-feed-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.feed-source-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  flex: 0 0 auto;
+}
+
+.feed-row-icon-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.10);
+}
+
+.feed-row-source-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.feed-row-source-logo.hl-feed-logo {
+  transform: scale(1.28);
+}
+.feed-row-source-logo.fatbot-feed-logo {
+  transform: scale(1.22);
+}
+
+.feed-token-inline {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+  margin-right: 5px;
+}
+.feed-token-inline .coin-img,
+.feed-token-inline .coin-icon {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  font-size: 8px;
+}
+
+.wallet-position-row .coin-img {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(255,255,255,.12);
+}

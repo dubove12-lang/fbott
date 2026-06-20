@@ -1,0 +1,5 @@
+Place logo files here:
+- fatbot-logo.png -> used for FatBot Vaults rows and Trader Profile header
+- hyperliquid-logo.png -> used for Top Traders rows and Trader Profile header
+
+If files are missing, UI falls back to FB / HL text badges.

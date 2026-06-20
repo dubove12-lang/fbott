@@ -1,11 +1,12 @@
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .database import init_db, seed_db
 from .schemas import WalletCreate, WalletSettingsPatch, PoolCreate
 from . import services
+from .hydromancer_client import HydromancerError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -43,12 +44,64 @@ def trader_source():
     return {"source": services.get_trader_source()}
 
 @app.get("/api/traders")
-def traders():
-    return services.list_traders()
+def traders(
+    window: str = Query("30d"),
+    sort_by: str = Query("totalPnl", alias="sortBy"),
+    limit: int = Query(50),
+    min_trades: int = Query(0, alias="minTrades"),
+    min_days_active: int = Query(0, alias="minDaysActive"),
+):
+    try:
+        return services.list_traders(
+            window=window,
+            sort_by=sort_by,
+            limit=limit,
+            min_trades=min_trades,
+            min_days_active=min_days_active,
+        )
+    except HydromancerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+@app.get("/api/hydromancer-check")
+def hydromancer_check():
+    try:
+        return services.hydromancer_check()
+    except HydromancerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+@app.get("/api/fatbot-vaults")
+def fatbot_vaults(
+    window: str = Query("30d"),
+    sort_by: str = Query("totalPnl", alias="sortBy"),
+    limit: int = Query(50),
+    min_trades: int = Query(0, alias="minTrades"),
+    min_days_active: int = Query(0, alias="minDaysActive"),
+):
+    return services.list_fatbot_vaults(
+        window=window,
+        sort_by=sort_by,
+        limit=limit,
+        min_trades=min_trades,
+        min_days_active=min_days_active,
+    )
 
 @app.get("/api/traders/{address}")
-def trader(address: str):
-    data = services.get_trader(address)
+def trader(
+    address: str,
+    window: str = Query("30d"),
+    sort_by: str = Query("totalPnl", alias="sortBy"),
+    limit: int = Query(50),
+    min_trades: int = Query(0, alias="minTrades"),
+    min_days_active: int = Query(0, alias="minDaysActive"),
+):
+    data = services.get_trader(
+        address,
+        window=window,
+        sort_by=sort_by,
+        limit=limit,
+        min_trades=min_trades,
+        min_days_active=min_days_active,
+    )
     if not data:
         raise HTTPException(status_code=404, detail="Trader not found")
     return data
