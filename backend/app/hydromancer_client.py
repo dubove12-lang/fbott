@@ -83,14 +83,18 @@ class HydromancerClient:
         data = self._post_info(payload)
         return self._extract_rows(data)
 
-    def clearinghouse_state(self, user: str) -> Optional[Dict[str, Any]]:
+    def clearinghouse_state(self, user: str, dex: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Optional enrichment. If Hydromancer supports clearinghouseState through /info,
-        this gives current account value and open positions.
+        Current clearinghouse state.
+
+        Hydromancer supports a `dex` field. `ALL_DEXES` returns native + HIP-3
+        dexes in one request when available, which is the preferred path for
+        live profile/market-type position discovery.
         """
         payload: Dict[str, Any] = {"type": "clearinghouseState", "user": user}
-        if self.dex:
-            payload["dex"] = self.dex
+        selected_dex = dex if dex is not None else self.dex
+        if selected_dex is not None:
+            payload["dex"] = selected_dex
         try:
             data = self._post_info(payload)
             return data if isinstance(data, dict) else None

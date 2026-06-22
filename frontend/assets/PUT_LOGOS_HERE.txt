@@ -3,3 +3,5 @@ Place logo files here:
 - hyperliquid-logo.png -> used for Top Traders rows and Trader Profile header
 
 If files are missing, UI falls back to FB / HL text badges.
+
+- xyz-dex-logo.png -> used for all XYZ / HIP-3 DEX positions and tickers

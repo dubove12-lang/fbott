@@ -1,0 +1,1 @@
+Upload your XYZ / HIP-3 DEX logo here as xyz-dex-logo.png. It will be served as /static/assets/xyz-dex-logo.png

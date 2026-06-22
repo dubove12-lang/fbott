@@ -43,6 +43,37 @@ def summary():
 def trader_source():
     return {"source": services.get_trader_source()}
 
+@app.get("/api/debug/profile-lookup/{address}")
+def debug_profile_lookup(address: str):
+    return services.debug_profile_lookup(address)
+
+@app.get("/api/debug/tradfi-scan")
+def debug_tradfi_scan(
+    window: str = Query("30d"),
+    sort_by: str = Query("totalPnl", alias="sortBy"),
+    limit: int = Query(500),
+    min_trades: int = Query(0, alias="minTrades"),
+    min_days_active: int = Query(0, alias="minDaysActive"),
+):
+    return services.debug_tradfi_scan(
+        window=window,
+        sort_by=sort_by,
+        limit=limit,
+        min_trades=min_trades,
+        min_days_active=min_days_active,
+    )
+
+@app.get("/api/market-registry")
+def market_registry():
+    return services.get_market_registry()
+
+@app.post("/api/market-registry/refresh")
+def market_registry_refresh():
+    try:
+        return services.refresh_market_registry()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
 @app.get("/api/traders")
 def traders(
     window: str = Query("30d"),
@@ -50,6 +81,7 @@ def traders(
     limit: int = Query(50),
     min_trades: int = Query(0, alias="minTrades"),
     min_days_active: int = Query(0, alias="minDaysActive"),
+    market_type: str = Query("all", alias="marketType"),
 ):
     try:
         return services.list_traders(
@@ -58,6 +90,7 @@ def traders(
             limit=limit,
             min_trades=min_trades,
             min_days_active=min_days_active,
+            market_type=market_type,
         )
     except HydromancerError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
@@ -76,6 +109,7 @@ def fatbot_vaults(
     limit: int = Query(50),
     min_trades: int = Query(0, alias="minTrades"),
     min_days_active: int = Query(0, alias="minDaysActive"),
+    market_type: str = Query("all", alias="marketType"),
 ):
     return services.list_fatbot_vaults(
         window=window,
@@ -83,6 +117,7 @@ def fatbot_vaults(
         limit=limit,
         min_trades=min_trades,
         min_days_active=min_days_active,
+        market_type=market_type,
     )
 
 @app.get("/api/traders/{address}")
@@ -93,6 +128,7 @@ def trader(
     limit: int = Query(50),
     min_trades: int = Query(0, alias="minTrades"),
     min_days_active: int = Query(0, alias="minDaysActive"),
+    market_type: str = Query("all", alias="marketType"),
 ):
     data = services.get_trader(
         address,
@@ -101,6 +137,7 @@ def trader(
         limit=limit,
         min_trades=min_trades,
         min_days_active=min_days_active,
+        market_type=market_type,
     )
     if not data:
         raise HTTPException(status_code=404, detail="Trader not found")

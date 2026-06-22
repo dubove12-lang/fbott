@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
 
 
 class HyperliquidError(RuntimeError):
@@ -11,6 +12,15 @@ class HyperliquidError(RuntimeError):
 
 
 _ALL_MIDS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": {}}
+
+_HTTP_SESSION = requests.Session()
+_HTTP_ADAPTER = HTTPAdapter(
+    pool_connections=int(os.getenv("HTTP_POOL_CONNECTIONS", "80")),
+    pool_maxsize=int(os.getenv("HTTP_POOL_MAXSIZE", "160")),
+    max_retries=0,
+)
+_HTTP_SESSION.mount("https://", _HTTP_ADAPTER)
+_HTTP_SESSION.mount("http://", _HTTP_ADAPTER)
 
 
 class HyperliquidClient:
@@ -26,14 +36,16 @@ class HyperliquidClient:
 
     def __init__(self) -> None:
         self.base_url = os.getenv("HYPERLIQUID_INFO_URL", "https://api.hyperliquid.xyz/info")
-        self.timeout = float(os.getenv("HYPERLIQUID_TIMEOUT", "20"))
+        self.timeout = float(os.getenv("HYPERLIQUID_TIMEOUT", "8"))
+        self.connect_timeout = float(os.getenv("HYPERLIQUID_CONNECT_TIMEOUT", "3"))
+        self.read_timeout = float(os.getenv("HYPERLIQUID_READ_TIMEOUT", str(self.timeout)))
 
     def post_info(self, payload: Dict[str, Any]) -> Any:
-        response = requests.post(
+        response = _HTTP_SESSION.post(
             self.base_url,
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=self.timeout,
+            timeout=(self.connect_timeout, self.read_timeout),
         )
 
         if response.status_code >= 400:
@@ -44,9 +56,45 @@ class HyperliquidClient:
         except Exception as exc:
             raise HyperliquidError(f"Hyperliquid returned non-JSON response: {exc}") from exc
 
-    def clearinghouse_state(self, user: str) -> Optional[Dict[str, Any]]:
-        data = self.post_info({"type": "clearinghouseState", "user": user})
+    def clearinghouse_state(self, user: str, dex: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        payload: Dict[str, Any] = {"type": "clearinghouseState", "user": user}
+        if dex:
+            payload["dex"] = dex
+        data = self.post_info(payload)
         return data if isinstance(data, dict) else None
+
+
+    def perp_dexs(self) -> Any:
+        """
+        Retrieve all perpetual dexes, including HIP-3 builder-deployed perp dexes.
+        """
+        return self.post_info({"type": "perpDexs"})
+
+    def all_perp_metas(self) -> Any:
+        """
+        Retrieve metadata for all perpetual dexes.
+        """
+        return self.post_info({"type": "allPerpMetas"})
+
+    def meta(self, dex: Optional[str] = None) -> Any:
+        """
+        Hyperliquid perpetuals metadata for a specific perp dex.
+        Default dex is the first/main perp dex.
+        """
+        payload: Dict[str, Any] = {"type": "meta"}
+        if dex:
+            payload["dex"] = dex
+        return self.post_info(payload)
+
+    def meta_and_asset_ctxs(self, dex: Optional[str] = None) -> Any:
+        """
+        Hyperliquid perpetuals metadata plus market contexts for a specific perp dex.
+        Expected response shape: [meta, asset_ctxs].
+        """
+        payload: Dict[str, Any] = {"type": "metaAndAssetCtxs"}
+        if dex:
+            payload["dex"] = dex
+        return self.post_info(payload)
 
 
     def portfolio(self, user: str) -> Any:

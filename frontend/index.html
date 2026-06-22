@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FatBot Copytrading MVP</title>
-  <link rel="stylesheet" href="/static/styles.css?v=60" />
+  <link rel="stylesheet" href="/static/styles.css?v=93" />
 </head>
 <body>
   <header class="topbar">
@@ -88,7 +88,7 @@
           <button class="leader-tab active" data-leader-tab="top">Top Traders</button>
           <button class="leader-tab" data-leader-tab="fatbot">FatBot Vaults</button>
           <button class="leader-tab" data-leader-tab="favourite">Favourite</button>
-          <button class="leader-tab" data-leader-tab="my">My Copytrading</button>
+          <button class="leader-tab" data-leader-tab="my" id="myLeaderTab">My Copytrading</button>
         </div>
 
         <div class="leaderboard-filter-bar" id="leaderboardFilterBar">
@@ -135,6 +135,15 @@
               <option value="50" selected>50</option>
               <option value="100">100</option>
               <option value="200">200</option>
+              <option value="500">500</option>
+            </select>
+          </label>
+          <label>
+            <span>Market type</span>
+            <select id="filterMarketType">
+              <option value="all" selected>All</option>
+              <option value="crypto">Crypto</option>
+              <option value="tradfi">TradFi</option>
             </select>
           </label>
         </div>
@@ -205,12 +214,12 @@
       <div class="panel multi-leaderboard-panel right-half-panel">
         <div class="panel-head small">
           <div>
-            <h2>Multi Copytrading Leaderboard</h2>
-            <p>Created multi wallets ranked by PnL.</p>
+            <h2 id="hotWalletsTitle">Hot wallets</h2>
+            <p id="hotWalletsSubtitle">Wallets most copied by FatBot users.</p>
           </div>
           <span class="pill">LIVE</span>
         </div>
-        <div id="multiLeaderboard" class="multi-leaderboard-list loading">Loading multi leaderboard...</div>
+        <div id="multiLeaderboard" class="multi-leaderboard-list hot-wallets-list loading">Loading hot wallets...</div>
       </div>
 
       <div class="panel live-feed-panel right-half-panel">
@@ -252,6 +261,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=60"></script>
+  <script src="/static/app.js?v=93"></script>
 </body>
 </html>

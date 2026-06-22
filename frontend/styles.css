@@ -1835,3 +1835,105 @@ button[data-close="traderModal"] {
   object-fit: cover;
   border: 1px solid rgba(255,255,255,.12);
 }
+
+
+/* v62 Market type filter: six controls in the leaderboard filter bar */
+.leaderboard-filter-bar {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+@media (max-width: 1400px) {
+  .leaderboard-filter-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+
+/* v63 market type empty state helper */
+.empty-state small {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+
+/* v93 Hot wallets layout fix */
+.hot-wallets-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+}
+
+.hot-wallet-row {
+  width: 100%;
+  display: grid !important;
+  grid-template-columns: 42px minmax(155px, 1.45fr) minmax(92px, 0.7fr) minmax(110px, 0.85fr) auto !important;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px !important;
+  box-sizing: border-box;
+}
+
+.hot-wallet-row .leader-logo {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+}
+
+.hot-wallet-main {
+  min-width: 0;
+}
+
+.hot-wallet-main .row-title {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hot-wallet-main .row-sub {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hot-wallet-metric,
+.hot-wallet-pnl {
+  min-width: 0;
+}
+
+.hot-wallet-metric strong,
+.hot-wallet-pnl strong {
+  display: block;
+  white-space: nowrap;
+}
+
+.hot-wallet-row .small-copy {
+  justify-self: end;
+  white-space: nowrap;
+  min-width: 92px;
+}
+
+@media (max-width: 1250px) {
+  .hot-wallet-row {
+    grid-template-columns: 38px minmax(130px, 1.4fr) minmax(82px, 0.65fr) minmax(96px, 0.75fr) auto !important;
+    gap: 10px;
+    padding: 12px 12px !important;
+  }
+
+  .hot-wallet-row .leader-logo {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+  }
+
+  .hot-wallet-row .small-copy {
+    min-width: 82px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}

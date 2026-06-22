@@ -1,13 +1,14 @@
 import os
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from .database import get_db, row_to_dict, rows_to_dicts
 from .hydromancer_client import HydromancerClient, HydromancerError, normalize_leaderboard_row
 from .hyperliquid_client import HyperliquidClient, HyperliquidError
 from .token_icons import get_token_icon_url
+from .market_registry import classify_coin, get_registry, registry_summary, refresh_registry, tradfi_asset_class, tradfi_dex_names, is_tradfi_dex_name
 
 FATBOT_DEFAULT_VAULTS = [
     "0x0baFb25EF191bFe7A2727E14F5BbfC36610EC62A",
@@ -20,7 +21,7 @@ _FATBOT_VAULT_CACHE_TTL_SECONDS = int(os.getenv("FATBOT_VAULT_CACHE_TTL_SECONDS"
 _TRADER_LEADERBOARD_CACHE: Dict[str, Any] = {"ts": 0.0, "data": []}
 _TRADER_LEADERBOARD_CACHE_TTL_SECONDS = int(os.getenv("TRADER_LEADERBOARD_CACHE_TTL_SECONDS", "60"))
 _PROFILE_CACHE: Dict[str, Any] = {}
-_PROFILE_CACHE_TTL_SECONDS = int(os.getenv("PROFILE_CACHE_TTL_SECONDS", "120"))
+_PROFILE_CACHE_TTL_SECONDS = int(os.getenv("PROFILE_CACHE_TTL_SECONDS", "600"))
 
 
 
@@ -58,6 +59,7 @@ def _normalize_leaderboard_filters(
     limit: int = 50,
     min_trades: int = 0,
     min_days_active: int = 0,
+    market_type: str = "all",
 ) -> Dict[str, Any]:
     valid_windows = {"1d", "7d", "30d", "90d", "all"}
     valid_sort = {"totalPnl", "volume", "winRate"}
@@ -74,7 +76,7 @@ def _normalize_leaderboard_filters(
         limit = int(limit)
     except Exception:
         limit = 50
-    limit = max(1, min(200, limit))
+    limit = max(1, min(500, limit))
 
     try:
         min_trades = int(min_trades)
@@ -88,12 +90,17 @@ def _normalize_leaderboard_filters(
         min_days_active = 0
     min_days_active = max(0, min_days_active)
 
+    market_type = str(market_type or "all").lower()
+    if market_type not in {"all", "crypto", "tradfi", "tradfi_any"}:
+        market_type = "all"
+
     return {
         "window": window,
         "sort_by": sort_by,
         "limit": limit,
         "min_trades": min_trades,
         "min_days_active": min_days_active,
+        "market_type": market_type,
     }
 
 
@@ -105,7 +112,116 @@ def _leaderboard_cache_key(prefix: str, filters: Dict[str, Any]) -> str:
         str(filters.get("limit")),
         str(filters.get("min_trades")),
         str(filters.get("min_days_active")),
+        str(filters.get("market_type", "all")),
     ])
+
+
+
+def _market_type_config() -> Dict[str, Any]:
+    # Separate thresholds:
+    # - Crypto remains stricter by default.
+    # - TradFi/XYZ is intentionally looser because these markets are more niche
+    #   and traders may mix collateral/hedges with crypto perps.
+    crypto_threshold = float(os.getenv("MARKET_TYPE_CRYPTO_THRESHOLD", os.getenv("MARKET_TYPE_EXPOSURE_THRESHOLD", "70")))
+    tradfi_threshold = float(os.getenv("MARKET_TYPE_TRADFI_THRESHOLD", "40"))
+    tradfi_position_count_threshold = float(os.getenv("MARKET_TYPE_TRADFI_POSITION_COUNT_THRESHOLD", "40"))
+
+    registry = get_registry(force_refresh=False)
+    return {
+        "registry": registry,
+        "crypto_threshold": crypto_threshold,
+        "tradfi_threshold": tradfi_threshold,
+        "tradfi_position_count_threshold": tradfi_position_count_threshold,
+        # Backwards-compatible generic threshold used only for debug display.
+        "threshold": tradfi_threshold,
+    }
+
+
+
+def _normalize_coin_symbol(coin: str) -> str:
+    raw = str(coin or "").upper().strip()
+    if ":" in raw:
+        raw = raw.split(":")[-1]
+    return raw
+
+
+def _attach_market_type_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = _market_type_config()
+
+    positions = row.get("positions") or []
+    tradfi_notional = 0.0
+    crypto_notional = 0.0
+    tradfi_position_count = 0
+    crypto_position_count = 0
+    coin_breakdown: List[Dict[str, Any]] = []
+
+    for pos in positions:
+        try:
+            notional = abs(float(pos.get("notional") or 0))
+        except Exception:
+            notional = 0.0
+
+        coin_raw = str(pos.get("coin") or "")
+        coin = _normalize_coin_symbol(coin_raw)
+        pos_dex = str(pos.get("dex") or "").strip().lower()
+        market = classify_coin(coin_raw, dex=pos_dex)
+        asset_class = tradfi_asset_class(coin_raw, dex=pos_dex)
+
+        if market == "tradfi":
+            tradfi_notional += notional
+            tradfi_position_count += 1
+        else:
+            crypto_notional += notional
+            crypto_position_count += 1
+
+        coin_breakdown.append({
+            "coin": coin_raw,
+            "normalized_coin": coin,
+            "dex": pos_dex,
+            "qualified_coin": f"{pos_dex}:{coin_raw}" if pos_dex else coin_raw,
+            "market_type": market,
+            "asset_class": asset_class,
+            "notional": notional,
+        })
+
+    gross = tradfi_notional + crypto_notional
+    total_position_count = tradfi_position_count + crypto_position_count
+    tradfi_pct = (tradfi_notional / gross * 100) if gross else 0.0
+    crypto_pct = (crypto_notional / gross * 100) if gross else 0.0
+    tradfi_position_count_pct = (tradfi_position_count / total_position_count * 100) if total_position_count else 0.0
+    crypto_position_count_pct = (crypto_position_count / total_position_count * 100) if total_position_count else 0.0
+
+    row["tradfi_notional"] = tradfi_notional
+    row["crypto_notional"] = crypto_notional
+    row["tradfi_exposure_pct"] = tradfi_pct
+    row["crypto_exposure_pct"] = crypto_pct
+    row["tradfi_position_count"] = tradfi_position_count
+    row["crypto_position_count"] = crypto_position_count
+    row["total_position_count"] = total_position_count
+    row["tradfi_position_count_pct"] = tradfi_position_count_pct
+    row["crypto_position_count_pct"] = crypto_position_count_pct
+    row["has_tradfi_position"] = tradfi_position_count > 0
+    row["has_crypto_position"] = crypto_position_count > 0
+    row["market_coin_breakdown"] = coin_breakdown
+
+    tradfi_threshold = cfg.get("tradfi_threshold", 40)
+    tradfi_position_count_threshold = cfg.get("tradfi_position_count_threshold", 40)
+    crypto_threshold = cfg.get("crypto_threshold", 70)
+    if total_position_count <= 0:
+        row["market_type"] = "none"
+        row["market_type_reason"] = "no_open_positions"
+    elif tradfi_position_count_pct >= tradfi_position_count_threshold:
+        row["market_type"] = "tradfi"
+        row["market_type_reason"] = "tradfi_position_count_threshold_met"
+    elif crypto_pct >= crypto_threshold:
+        row["market_type"] = "crypto"
+        row["market_type_reason"] = "crypto_exposure_threshold_met"
+    else:
+        row["market_type"] = "mixed"
+        row["market_type_reason"] = "tradfi_position_count_below_threshold" if tradfi_position_count > 0 else "below_threshold"
+
+    return row
+
 
 
 def _apply_local_leaderboard_filters(rows: List[Dict[str, Any]], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -113,6 +229,7 @@ def _apply_local_leaderboard_filters(rows: List[Dict[str, Any]], filters: Dict[s
     min_days = int(filters.get("min_days_active") or 0)
     limit = int(filters.get("limit") or 50)
     sort_by = str(filters.get("sort_by") or "totalPnl")
+    market_type = str(filters.get("market_type") or "all")
 
     filtered = []
     for row in rows:
@@ -122,6 +239,25 @@ def _apply_local_leaderboard_filters(rows: List[Dict[str, Any]], filters: Dict[s
             continue
         if days < min_days:
             continue
+        if market_type != "all":
+            row_market = str(row.get("market_type") or "").lower()
+            # TradFi filter is based on count of open positions, not exposure notional.
+            # Example: 10 open positions, 1 TradFi = 10%; 4 TradFi = 40%.
+            if market_type == "tradfi_any":
+                # Discovery mode: show any wallet with at least one current TradFi/XYZ/SPX position.
+                if not (bool(row.get("has_tradfi_position")) or int(row.get("tradfi_position_count") or 0) > 0):
+                    continue
+            elif market_type == "tradfi":
+                # Strict mode: TradFi open-position count share must be >= threshold.
+                cfg = _market_type_config()
+                threshold = float(cfg.get("tradfi_position_count_threshold") or 40)
+                count_pct = float(row.get("tradfi_position_count_pct") or 0)
+                if count_pct < threshold:
+                    continue
+            else:
+                # Crypto keeps the threshold-based exposure rule.
+                if row_market != market_type:
+                    continue
         filtered.append(row)
 
     def sort_value(row: Dict[str, Any]) -> float:
@@ -132,7 +268,210 @@ def _apply_local_leaderboard_filters(rows: List[Dict[str, Any]], filters: Dict[s
         return float(row.get("total_pnl") or row.get("pnl_usd") or row.get("pnl_pct") or 0)
 
     filtered.sort(key=sort_value, reverse=True)
-    return filtered[:limit]
+    out = filtered[:limit]
+    for row in out:
+        if market_type != "all":
+            row["active_market_filter"] = market_type
+            cfg = _market_type_config()
+            row["market_filter_threshold"] = (
+                0 if market_type == "tradfi_any"
+                else cfg.get("tradfi_position_count_threshold") if market_type == "tradfi"
+                else cfg.get("crypto_threshold")
+            )
+            row["market_filter_mode"] = (
+                "any_tradfi_position" if market_type == "tradfi_any"
+                else "position_count_pct" if market_type == "tradfi"
+                else "exposure_threshold"
+            )
+    return out
+
+def get_market_registry() -> Dict[str, Any]:
+    return registry_summary()
+
+
+def refresh_market_registry() -> Dict[str, Any]:
+    refresh_registry()
+    return registry_summary()
+
+
+def debug_tradfi_scan(
+    window: str = "30d",
+    sort_by: str = "totalPnl",
+    limit: int = 500,
+    min_trades: int = 0,
+    min_days_active: int = 0,
+) -> Dict[str, Any]:
+    filters = _normalize_leaderboard_filters(window, sort_by, limit, min_trades, min_days_active, "tradfi")
+    client = HydromancerClient()
+    if not client.enabled:
+        return {"status": "hydromancer_disabled"}
+
+    candidates = _hydromancer_market_type_candidates(client, filters)
+    enriched = _enrich_top_traders_with_current_exposure(candidates)
+
+    with_positions = [r for r in enriched if int(r.get("open_positions") or 0) > 0]
+    tradfi_threshold = float(_market_type_config().get("tradfi_position_count_threshold") or 40)
+    tradfi_any_rows = [r for r in enriched if bool(r.get("has_tradfi_position")) or int(r.get("tradfi_position_count") or 0) > 0]
+    tradfi_rows = [r for r in enriched if float(r.get("tradfi_position_count_pct") or 0) >= tradfi_threshold]
+    mixed_rows = [r for r in enriched if str(r.get("market_type") or "").lower() == "mixed"]
+
+    coin_counts: Dict[str, Dict[str, Any]] = {}
+    for row in enriched:
+        for p in row.get("positions") or []:
+            coin = str(p.get("coin") or "?")
+            dex = str(p.get("dex") or "").strip().lower()
+            market = classify_coin(coin, dex=dex)
+            asset_class = tradfi_asset_class(coin, dex=dex)
+            qualified_coin = f"{dex}:{coin}" if dex else coin
+            key = f"{market}:{asset_class}:{qualified_coin}"
+            if key not in coin_counts:
+                coin_counts[key] = {"coin": coin, "dex": dex, "qualified_coin": qualified_coin, "market_type": market, "asset_class": asset_class, "count": 0, "notional": 0.0}
+            coin_counts[key]["count"] += 1
+            try:
+                coin_counts[key]["notional"] += abs(float(p.get("notional") or 0))
+            except Exception:
+                pass
+
+    return {
+        "status": "ok",
+        "filters": filters,
+        "candidate_count": len(candidates),
+        "enriched_count": len(enriched),
+        "with_open_positions_count": len(with_positions),
+        "tradfi_count": len(tradfi_rows),
+        "tradfi_any_count": len(tradfi_any_rows),
+        "tradfi_presence_count": len(tradfi_any_rows),
+        "mixed_count": len(mixed_rows),
+        "thresholds": {
+            "tradfi_position_count": _market_type_config().get("tradfi_position_count_threshold"),
+            "tradfi_exposure": _market_type_config().get("tradfi_threshold"),
+            "crypto": _market_type_config().get("crypto_threshold"),
+        },
+        "coin_counts": sorted(coin_counts.values(), key=lambda x: x.get("notional", 0), reverse=True)[:100],
+        "tradfi_rows": [
+            {
+                "address": r.get("address"),
+                "rank": r.get("rank"),
+                "source_sort": r.get("market_scan_source_sort"),
+                "tradfi_exposure_pct": r.get("tradfi_exposure_pct"),
+                "crypto_exposure_pct": r.get("crypto_exposure_pct"),
+                "tradfi_position_count": r.get("tradfi_position_count"),
+                "total_position_count": r.get("total_position_count"),
+                "tradfi_position_count_pct": r.get("tradfi_position_count_pct"),
+                "open_positions": r.get("open_positions"),
+                "coins": [p.get("coin") for p in (r.get("positions") or [])],
+            }
+            for r in tradfi_rows[:50]
+        ],
+        "tradfi_any_rows": [
+            {
+                "address": r.get("address"),
+                "rank": r.get("rank"),
+                "source_sort": r.get("market_scan_source_sort"),
+                "tradfi_exposure_pct": r.get("tradfi_exposure_pct"),
+                "crypto_exposure_pct": r.get("crypto_exposure_pct"),
+                "tradfi_position_count": r.get("tradfi_position_count"),
+                "total_position_count": r.get("total_position_count"),
+                "tradfi_position_count_pct": r.get("tradfi_position_count_pct"),
+                "open_positions": r.get("open_positions"),
+                "coins": [p.get("coin") for p in (r.get("positions") or [])],
+            }
+            for r in tradfi_any_rows[:50]
+        ],
+        "sample": [
+            {
+                "rank": r.get("rank"),
+                "address": r.get("address"),
+                "source_sort": r.get("market_scan_source_sort"),
+                "open_positions": r.get("open_positions"),
+                "market_type": r.get("market_type"),
+                "market_type_reason": r.get("market_type_reason"),
+                "tradfi_exposure_pct": r.get("tradfi_exposure_pct"),
+                "crypto_exposure_pct": r.get("crypto_exposure_pct"),
+                "coins": [p.get("coin") for p in (r.get("positions") or [])],
+                "hl_state_status": r.get("hl_state_status"),
+            }
+            for r in enriched[:100]
+        ],
+    }
+
+
+def debug_profile_lookup(address: str) -> Dict[str, Any]:
+    cached = _find_trader_in_leaderboard_caches(address)
+    out: Dict[str, Any] = {
+        "address": address,
+        "found_in_leaderboard_cache_with_positions": cached is not None,
+        "cache_summary": [],
+    }
+
+    for cache_name, cache in [
+        ("trader_leaderboard", _TRADER_LEADERBOARD_CACHE),
+        ("fatbot_vault", _FATBOT_VAULT_CACHE),
+    ]:
+        for cache_key, item in list(cache.items()):
+            try:
+                data = item.get("data") if isinstance(item, dict) else item
+                if not isinstance(data, list):
+                    continue
+                target = str(address or "").lower()
+                matching_rows = [
+                    row for row in data
+                    if isinstance(row, dict) and str(row.get("address") or "").lower() == target
+                ]
+                out["cache_summary"].append({
+                    "cache": cache_name,
+                    "key": str(cache_key),
+                    "rows": len(data),
+                    "contains_address": bool(matching_rows),
+                    "matching_rows": len(matching_rows),
+                    "matching_rows_with_positions": sum(1 for row in matching_rows if row.get("positions")),
+                })
+            except Exception as exc:
+                out["cache_summary"].append({
+                    "cache": cache_name,
+                    "key": str(cache_key),
+                    "error": str(exc),
+                })
+
+    metadata = _find_trader_row_in_leaderboard_caches(address)
+    if metadata:
+        out["cached_metadata_row"] = {
+            "address": metadata.get("address"),
+            "rank": metadata.get("rank"),
+            "account_value": metadata.get("account_value"),
+            "account_value_source": metadata.get("account_value_source"),
+            "total_pnl": metadata.get("total_pnl"),
+            "volume": metadata.get("volume") or metadata.get("volume_traded"),
+            "win_rate": metadata.get("win_rate"),
+            "open_positions": metadata.get("open_positions"),
+            "positions_count": len(metadata.get("positions") or []),
+            "leaderboard_cache_source": metadata.get("leaderboard_cache_source"),
+        }
+
+    if cached:
+        out["cached_row"] = {
+            "address": cached.get("address"),
+            "rank": cached.get("rank"),
+            "source": cached.get("source"),
+            "market_type": cached.get("market_type"),
+            "market_type_reason": cached.get("market_type_reason"),
+            "open_positions": cached.get("open_positions"),
+            "positions_count": len(cached.get("positions") or []),
+            "coins": [
+                {
+                    "coin": p.get("coin"),
+                    "dex": p.get("dex"),
+                    "side": p.get("side"),
+                    "notional": p.get("notional"),
+                }
+                for p in (cached.get("positions") or [])
+            ],
+            "profile_mode": cached.get("profile_mode"),
+            "profile_cache_source": cached.get("profile_cache_source"),
+        }
+
+    return out
+
 
 def get_trader_source() -> str:
     return "hydromancer" if hydromancer_enabled() else "sqlite_mock"
@@ -158,6 +497,64 @@ def get_summary() -> Dict[str, Any]:
 
 
 
+def _enrich_top_traders_account_value(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Lightweight account value enrichment for Top Traders table.
+
+    This only fetches main/default clearinghouseState and only for a capped
+    number of visible rows, so it does not change ranking/filter logic.
+    """
+    enabled = os.getenv("TOP_TRADERS_ACCOUNT_VALUE_ENRICH", "true").lower() in ("1", "true", "yes", "on")
+    if not enabled or not rows:
+        return rows
+
+    try:
+        enrich_limit = int(os.getenv("TOP_TRADERS_ACCOUNT_VALUE_ENRICH_LIMIT", "50"))
+    except Exception:
+        enrich_limit = 50
+    enrich_limit = max(0, min(enrich_limit, len(rows)))
+
+    try:
+        workers = int(os.getenv("TOP_TRADERS_ACCOUNT_VALUE_WORKERS", "24"))
+    except Exception:
+        workers = 24
+    workers = max(1, min(workers, max(1, enrich_limit)))
+
+    def enrich_one(item: Dict[str, Any]) -> Dict[str, Any]:
+        if item.get("account_value"):
+            return item
+        address = str(item.get("address") or "")
+        if not address:
+            return item
+        try:
+            hl_client = HyperliquidClient()
+            hl_state = hl_client.clearinghouse_state(address)
+            if hl_state:
+                account_value = _extract_account_value_from_state(hl_state)
+                if account_value:
+                    item["account_value"] = account_value
+                    item["account_value_source"] = "hyperliquid_clearinghouseState"
+        except Exception as exc:
+            item["account_value_status"] = f"error: {exc}"
+        return item
+
+    head = rows[:enrich_limit]
+    tail = rows[enrich_limit:]
+    enriched: List[Optional[Dict[str, Any]]] = [None] * len(head)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(enrich_one, dict(row)): idx for idx, row in enumerate(head)}
+        for future in as_completed(future_map):
+            idx = future_map[future]
+            try:
+                enriched[idx] = future.result()
+            except Exception:
+                enriched[idx] = head[idx]
+
+    return [row if row is not None else head[i] for i, row in enumerate(enriched)] + tail
+
+
+
 def _enrich_top_traders_with_current_exposure(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Lightweight current exposure enrichment for Hydromancer Top Traders rows.
@@ -173,14 +570,16 @@ def _enrich_top_traders_with_current_exposure(rows: List[Dict[str, Any]]) -> Lis
     if not enabled or not rows:
         return rows
 
+    has_tradfi_filter = any(str(row.get("requested_market_type") or row.get("active_market_filter") or "").lower() in ("tradfi", "tradfi_any") for row in rows)
     try:
-        enrich_limit = int(os.getenv("TOP_TRADERS_EXPOSURE_ENRICH_LIMIT", "50"))
+        default_limit = "2000" if has_tradfi_filter else "800"
+        enrich_limit = int(os.getenv("TOP_TRADERS_EXPOSURE_ENRICH_LIMIT", default_limit))
     except Exception:
-        enrich_limit = 50
+        enrich_limit = 2000 if has_tradfi_filter else 800
     enrich_limit = max(0, min(enrich_limit, len(rows)))
 
     try:
-        workers = int(os.getenv("TOP_TRADERS_EXPOSURE_WORKERS", "12"))
+        workers = int(os.getenv("TOP_TRADERS_EXPOSURE_WORKERS", "36"))
     except Exception:
         workers = 12
     workers = max(1, min(workers, max(1, enrich_limit)))
@@ -192,19 +591,23 @@ def _enrich_top_traders_with_current_exposure(rows: List[Dict[str, Any]]) -> Lis
 
         try:
             hl_client = HyperliquidClient()
-            hl_state = hl_client.clearinghouse_state(address)
-            if hl_state:
+            hl_state, positions, dex_status = _hyperliquid_positions_all_relevant_dexes(hl_client, address, all_mids={})
+            if hl_state or positions:
                 item["hl_state_status"] = "ok"
-                item["account_value"] = _extract_account_value_from_state(hl_state) or item.get("account_value", 0)
+                item["dex_state_status"] = dex_status
+                item["account_value"] = _extract_account_value_from_state(hl_state or {}) or item.get("account_value", 0)
                 if not item.get("account_value"):
                     item["account_value"] = _account_value_from_portfolio_fallback(hl_client, address, "30d")
                     if item.get("account_value"):
                         item["account_value_source"] = "hyperliquid_portfolio"
-                # For exposure, positionValue from clearinghouseState is enough;
-                # allMids is not needed, keeping this path much faster.
-                item["positions"] = _extract_positions_from_state(hl_state, all_mids={})
+                item["positions"] = positions
                 item["open_positions"] = len(item["positions"])
-                item["margin_summary"] = hl_state.get("marginSummary") or hl_state.get("crossMarginSummary") or {}
+                item["margin_summary"] = (hl_state or {}).get("marginSummary") or (hl_state or {}).get("crossMarginSummary") or {}
+                item = _attach_current_exposure_metrics(item)
+            else:
+                item["hl_state_status"] = "empty"
+                item["positions"] = []
+                item["open_positions"] = 0
                 item = _attach_current_exposure_metrics(item)
         except Exception as exc:
             item["hl_state_status"] = f"exposure_error: {exc}"
@@ -217,9 +620,7 @@ def _enrich_top_traders_with_current_exposure(rows: List[Dict[str, Any]]) -> Lis
     enriched: List[Optional[Dict[str, Any]]] = [None] * len(head)
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(enrich_one, dict(row)): idx for idx, row in enumerate(head)}
-        for future, idx in []:
-            pass
-        for future in future_map:
+        for future in as_completed(future_map):
             idx = future_map[future]
             try:
                 enriched[idx] = future.result()
@@ -229,6 +630,78 @@ def _enrich_top_traders_with_current_exposure(rows: List[Dict[str, Any]]) -> Lis
     return [row if row is not None else head[i] for i, row in enumerate(enriched)] + tail
 
 
+
+def _hydromancer_market_type_candidates(client: HydromancerClient, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    market_type = str(filters.get("market_type") or "all").lower()
+
+    try:
+        scan_limit = int(os.getenv("MARKET_TYPE_SCAN_LIMIT", "500"))
+    except Exception:
+        scan_limit = 500
+    scan_limit = max(int(filters.get("limit") or 50), min(scan_limit, 500))
+
+    selected_sort = str(filters.get("sort_by") or "totalPnl")
+    scan_sorts: List[str] = []
+    for sort_key in (selected_sort, "totalPnl", "volume", "winRate"):
+        if sort_key not in scan_sorts:
+            scan_sorts.append(sort_key)
+
+    def fetch_sort(sort_key: str) -> Tuple[str, List[Dict[str, Any]]]:
+        try:
+            rows = client.user_pnl_leaderboard(
+                window=filters["window"],
+                sort_by=sort_key,
+                limit=scan_limit,
+                min_trades=filters["min_trades"],
+                min_days_active=filters["min_days_active"],
+            )
+            return sort_key, rows or []
+        except Exception as exc:
+            print(f"[Hydromancer] market scan failed for sort={sort_key}: {exc}")
+            return sort_key, []
+
+    # Fetch sort slices in parallel. This preserves the same candidate universe,
+    # but avoids waiting for totalPnl -> volume -> winRate sequentially.
+    rows_by_sort: List[Tuple[str, List[Dict[str, Any]]]] = []
+    max_workers = min(len(scan_sorts), int(os.getenv("HYDROMANCER_SCAN_WORKERS", "4")))
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
+        future_map = {executor.submit(fetch_sort, sort_key): sort_key for sort_key in scan_sorts}
+        tmp: Dict[str, List[Dict[str, Any]]] = {}
+        for future in as_completed(future_map):
+            sort_key, rows = future.result()
+            tmp[sort_key] = rows
+        # Keep deterministic interleave order.
+        rows_by_sort = [(sort_key, tmp.get(sort_key, [])) for sort_key in scan_sorts]
+
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    max_len = max((len(rows) for _, rows in rows_by_sort), default=0)
+
+    for i in range(max_len):
+        for sort_key, rows in rows_by_sort:
+            if i >= len(rows):
+                continue
+            normalized = normalize_leaderboard_row(rows[i], len(out) + 1)
+            address = str(normalized.get("address") or "").lower()
+            if not address or address in seen:
+                continue
+            seen.add(address)
+            normalized["leaderboard_window"] = filters["window"]
+            normalized["leaderboard_sort_by"] = selected_sort
+            normalized["market_scan_source_sort"] = sort_key
+            normalized["requested_market_type"] = market_type
+            out.append(normalized)
+
+    try:
+        max_candidates = int(os.getenv("MARKET_TYPE_MAX_CANDIDATES", "2000" if market_type in ("tradfi", "tradfi_any") else "800"))
+    except Exception:
+        max_candidates = 2000 if market_type in ("tradfi", "tradfi_any") else 800
+    max_candidates = max(int(filters.get("limit") or 50), min(max_candidates, 2500))
+
+    return out[:max_candidates]
+
+
+
 def list_traders(
     force_refresh: bool = False,
     window: str = "30d",
@@ -236,8 +709,9 @@ def list_traders(
     limit: int = 50,
     min_trades: int = 0,
     min_days_active: int = 0,
+    market_type: str = "all",
 ) -> List[Dict[str, Any]]:
-    filters = _normalize_leaderboard_filters(window, sort_by, limit, min_trades, min_days_active)
+    filters = _normalize_leaderboard_filters(window, sort_by, limit, min_trades, min_days_active, market_type)
     cache_key = _leaderboard_cache_key("traders", filters)
 
     now = time.time()
@@ -248,14 +722,18 @@ def list_traders(
     client = HydromancerClient()
     if client.enabled:
         try:
-            rows = client.user_pnl_leaderboard(
-                window=filters["window"],
-                sort_by=filters["sort_by"],
-                limit=filters["limit"],
-                min_trades=filters["min_trades"],
-                min_days_active=filters["min_days_active"],
-            )
-            normalized = [normalize_leaderboard_row(row, idx + 1) for idx, row in enumerate(rows)]
+            if filters.get("market_type") != "all":
+                normalized = _hydromancer_market_type_candidates(client, filters)
+            else:
+                rows = client.user_pnl_leaderboard(
+                    window=filters["window"],
+                    sort_by=filters["sort_by"],
+                    limit=filters["limit"],
+                    min_trades=filters["min_trades"],
+                    min_days_active=filters["min_days_active"],
+                )
+                normalized = [normalize_leaderboard_row(row, idx + 1) for idx, row in enumerate(rows)]
+
             normalized = [row for row in normalized if row.get("address")]
             if not normalized:
                 raise HydromancerError("Hydromancer userPnlLeaderboard returned zero usable rows")
@@ -264,8 +742,27 @@ def list_traders(
                 row["rank"] = idx
                 row["leaderboard_window"] = filters["window"]
                 row["leaderboard_sort_by"] = filters["sort_by"]
+                row["requested_market_type"] = filters.get("market_type")
 
-            normalized = _enrich_top_traders_with_current_exposure(normalized)
+            # Current-position enrichment is expensive. Only force it when the
+            # Market Type filter needs live positions.
+            if filters.get("market_type") != "all":
+                normalized = _enrich_top_traders_with_current_exposure(normalized)
+            else:
+                # For the main leaderboard table only, attach account value to a
+                # capped number of visible rows so the UI can show Account Value
+                # instead of historical volume without changing ranking/filter logic.
+                normalized = _enrich_top_traders_account_value(normalized)
+
+            normalized = _apply_local_leaderboard_filters(normalized, filters)
+
+            # Account Value column is visible in the table. For market-type scans,
+            # fill missing account values only after filtering, capped to visible rows.
+            if filters.get("market_type") != "all":
+                normalized = _enrich_top_traders_account_value(normalized)
+
+            for idx, row in enumerate(normalized, start=1):
+                row["rank"] = idx
 
             _TRADER_LEADERBOARD_CACHE[cache_key] = {"ts": now, "data": normalized}
             return normalized
@@ -461,6 +958,7 @@ def list_fatbot_vaults(
     limit: int = 50,
     min_trades: int = 0,
     min_days_active: int = 0,
+    market_type: str = "all",
 ) -> List[Dict[str, Any]]:
     """
     Platform-created/fixed FatBot vault leaderboard.
@@ -469,7 +967,7 @@ def list_fatbot_vaults(
     - window controls the HL fills/funding lookback used to compose PnL/volume/funding.
     - sort/min filters are applied locally after vault stats are composed.
     """
-    filters = _normalize_leaderboard_filters(window, sort_by, limit, min_trades, min_days_active)
+    filters = _normalize_leaderboard_filters(window, sort_by, limit, min_trades, min_days_active, market_type)
     cache_key = _leaderboard_cache_key("fatbot_vaults", filters)
 
     now = time.time()
@@ -514,6 +1012,203 @@ def list_fatbot_vaults(
     return out
 
 
+def _find_trader_row_in_leaderboard_caches(address: str) -> Optional[Dict[str, Any]]:
+    """
+    Find the exact clicked row in existing leaderboard caches, even if it has no
+    positions. This is used only to merge table fields such as account_value,
+    rank, volume, win_rate, etc. It is NOT used to skip live profile fetching.
+    """
+    target = str(address or "").lower()
+    if not target:
+        return None
+
+    for cache_name, cache in [
+        ("trader_leaderboard", _TRADER_LEADERBOARD_CACHE),
+        ("fatbot_vault", _FATBOT_VAULT_CACHE),
+    ]:
+        for cache_key, item in list(cache.items()):
+            try:
+                data = item.get("data") if isinstance(item, dict) else item
+                if not isinstance(data, list):
+                    continue
+                for row in data:
+                    if not isinstance(row, dict):
+                        continue
+                    if str(row.get("address") or "").lower() == target:
+                        out = dict(row)
+                        out["leaderboard_cache_source"] = f"{cache_name}:{cache_key}"
+                        return out
+            except Exception:
+                continue
+
+    return None
+
+
+def _merge_cached_row_fields(base: Dict[str, Any], cached: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Merge non-position leaderboard fields into profile result without overwriting
+    real live position data.
+
+    This fixes the case where the table already shows Account Value from a
+    lightweight leaderboard enrichment, but the profile live fallback cannot
+    fetch positions/account value and would otherwise display a blank value.
+    """
+    if not isinstance(cached, dict):
+        return base
+
+    keep_base_if_present = {
+        "positions",
+        "open_positions",
+        "margin_summary",
+        "dex_state_status",
+        "hl_state_status",
+        "profile_mode",
+        "profile_warning",
+        "positions_status",
+    }
+
+    for key, value in cached.items():
+        if key in keep_base_if_present:
+            continue
+        if value in (None, "", [], {}):
+            continue
+
+        current = base.get(key)
+        if current in (None, "", [], {}) or (isinstance(current, (int, float)) and float(current) == 0.0):
+            base[key] = value
+
+    if cached.get("account_value") and not base.get("account_value"):
+        base["account_value"] = cached.get("account_value")
+        base["account_value_source"] = cached.get("account_value_source") or "leaderboard_cache"
+
+    base["merged_leaderboard_cache_source"] = cached.get("leaderboard_cache_source")
+    return base
+
+
+
+def _find_trader_in_leaderboard_caches(address: str) -> Optional[Dict[str, Any]]:
+    """
+    Find exact clicked row in existing leaderboard caches.
+
+    This prevents a visible TradFi/XYZ row from opening as an empty/0-position
+    profile after a profile endpoint re-scan misses the same wallet.
+    """
+    target = str(address or "").lower()
+    if not target:
+        return None
+
+    for cache_name, cache in [
+        ("trader_leaderboard", _TRADER_LEADERBOARD_CACHE),
+        ("fatbot_vault", _FATBOT_VAULT_CACHE),
+    ]:
+        for cache_key, item in list(cache.items()):
+            try:
+                data = item.get("data") if isinstance(item, dict) else item
+                if not isinstance(data, list):
+                    continue
+                for row in data:
+                    if not isinstance(row, dict):
+                        continue
+                    if str(row.get("address") or "").lower() == target:
+                        # Only use cached leaderboard row as a profile if it actually
+                        # contains live positions. Normal Top Traders rows in Market
+                        # Type = All deliberately do NOT contain positions, so returning
+                        # them here would break normal trader profiles.
+                        positions = row.get("positions") or []
+                        if not positions:
+                            continue
+
+                        out = dict(row)
+                        out["history"] = []
+                        out["profile_mode"] = "from_existing_leaderboard_cache_with_positions"
+                        out["profile_cache_source"] = f"{cache_name}:{cache_key}"
+                        out["open_positions"] = len(positions)
+                        out = _attach_current_exposure_metrics(out)
+                        return out
+            except Exception:
+                continue
+
+    return None
+
+
+
+def _direct_live_trader_profile(address: str, filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Fallback profile path for clicked rows from widened filtered leaderboards.
+
+    A visible TradFi/XYZ row can come from a broad candidate scan. If the profile
+    lookup later re-runs a narrower slice and misses that wallet, do not return
+    404; build a direct live profile from the address.
+    """
+    if not HydromancerClient().enabled:
+        return None
+
+    cached_metadata_row = _find_trader_row_in_leaderboard_caches(address)
+
+    t: Dict[str, Any] = {
+        "address": address,
+        "source": "hydromancer",
+        "label": "Hydromancer PnL leaderboard",
+        "rank": None,
+        "total_pnl": 0.0,
+        "volume": 0.0,
+        "volume_traded": 0.0,
+        "win_rate": None,
+        "total_trades": 0,
+        "account_age_days": 0,
+        "positions": [],
+        "history": [],
+        "profile_mode": "direct_live_fallback",
+    }
+
+    try:
+        client = HydromancerClient()
+        rows = client.user_pnl_leaderboard(
+            window=filters["window"],
+            sort_by=filters["sort_by"],
+            limit=500,
+            min_trades=filters["min_trades"],
+            min_days_active=filters["min_days_active"],
+        )
+        for idx, row in enumerate(rows or [], start=1):
+            normalized = normalize_leaderboard_row(row, idx)
+            if str(normalized.get("address") or "").lower() == str(address).lower():
+                t.update(normalized)
+                t["rank"] = idx
+                break
+    except Exception as exc:
+        t["hydromancer_profile_status"] = f"merge_error: {exc}"
+
+    try:
+        hl_client = HyperliquidClient()
+        include_xyz = (
+            filters.get("market_type") in ("tradfi", "tradfi_any")
+            or os.getenv("PROFILE_INCLUDE_XYZ_DEX", "false").lower() in ("1", "true", "yes", "on")
+        )
+
+        if include_xyz:
+            hl_state, fresh_positions, dex_status = _hyperliquid_positions_all_relevant_dexes(hl_client, address, all_mids={})
+        else:
+            hl_state = hl_client.clearinghouse_state(address)
+            fresh_positions = _extract_positions_from_state(hl_state or {}, all_mids={}, dex="")
+            dex_status = {"dexes_checked": ["main_direct_profile"], "dex_errors": {}}
+
+        t["hl_state_status"] = "ok" if (hl_state or fresh_positions) else "empty"
+        t["dex_state_status"] = dex_status
+        t["account_value"] = _extract_account_value_from_state(hl_state or {}) or t.get("account_value", 0)
+        t["positions"] = fresh_positions or []
+        t["open_positions"] = len(t["positions"])
+        if not fresh_positions:
+            t["positions_status"] = "direct_live_lookup_returned_no_positions"
+            t["profile_warning"] = "Direct fallback found no live positions. This is diagnostic, not a confirmed zero-position result."
+        t["margin_summary"] = (hl_state or {}).get("marginSummary") or (hl_state or {}).get("crossMarginSummary") or {}
+        t = _attach_current_exposure_metrics(t)
+    except Exception as exc:
+        t["hl_state_status"] = f"error: {exc}"
+
+    return _merge_cached_row_fields(t, cached_metadata_row)
+
+
 def get_trader(
     address: str,
     window: str = "30d",
@@ -521,13 +1216,21 @@ def get_trader(
     limit: int = 50,
     min_trades: int = 0,
     min_days_active: int = 0,
+    market_type: str = "all",
 ) -> Optional[Dict[str, Any]]:
-    filters = _normalize_leaderboard_filters(window, sort_by, limit, min_trades, min_days_active)
+    filters = _normalize_leaderboard_filters(window, sort_by, limit, min_trades, min_days_active, market_type)
     profile_cache_key = _leaderboard_cache_key(f"profile:{address.lower()}", filters)
 
     cached_profile = _profile_cache_get(profile_cache_key)
     if cached_profile is not None:
         return cached_profile
+
+    cached_metadata_row = _find_trader_row_in_leaderboard_caches(address)
+
+    cached_row_profile = _find_trader_in_leaderboard_caches(address)
+    if cached_row_profile is not None:
+        cached_row_profile = _merge_cached_row_fields(cached_row_profile, cached_metadata_row)
+        return _profile_cache_set(profile_cache_key, cached_row_profile)
 
     # FatBot vault profiles are platform vaults, even when the address also appears in external leaderboards.
     for vault in list_fatbot_vaults(
@@ -536,6 +1239,7 @@ def get_trader(
         limit=filters["limit"],
         min_trades=0,
         min_days_active=0,
+        market_type=filters["market_type"],
     ):
         if str(vault.get("address", "")).lower() == address.lower() or str(vault.get("vault_id", "")) == address:
             vault["history"] = []
@@ -566,45 +1270,89 @@ def get_trader(
         limit=filters["limit"],
         min_trades=filters["min_trades"],
         min_days_active=filters["min_days_active"],
+        market_type=filters["market_type"],
     ):
             if str(t.get("address", "")).lower() == address.lower():
-                t["positions"] = []
+                # Keep positions already attached by the market-type leaderboard enrichment.
+                # v67 bug: this was reset to [] before the fresh profile fetch. If the fresh
+                # fetch failed or one malformed position raised, the modal showed exposure
+                # and "Live Positions > 0" but no rows.
+                existing_positions = list(t.get("positions") or [])
+                t["positions"] = existing_positions
                 t["history"] = []
                 t["hl_state_status"] = "not_loaded"
 
+                # Fast profile mode:
+                # If the leaderboard row already has enriched live positions/exposure
+                # from a market-type scan, return it immediately. This avoids doing
+                # another slow allMids + main dex + XYZ dex refresh when opening modal.
+                fast_mode = os.getenv("PROFILE_FAST_MODE", "true").lower() in ("1", "true", "yes", "on")
+                if fast_mode and existing_positions:
+                    t["profile_mode"] = "fast_cached_leaderboard_row_with_positions"
+                    t["open_positions"] = len(existing_positions)
+                    t = _attach_current_exposure_metrics(t)
+                    return _profile_cache_set(profile_cache_key, t)
+
                 try:
                     hl_client = HyperliquidClient()
-                    hl_state = hl_client.clearinghouse_state(address)
-                    all_mids = {}
-                    try:
-                        all_mids = hl_client.all_mids()
-                    except Exception:
-                        all_mids = {}
 
-                    if hl_state:
+                    # Do not call allMids by default. It is useful for more exact live
+                    # prices, but it makes profile opening noticeably slower.
+                    all_mids = {}
+                    if os.getenv("PROFILE_FETCH_ALL_MIDS", "false").lower() in ("1", "true", "yes", "on"):
+                        try:
+                            all_mids = hl_client.all_mids()
+                        except Exception:
+                            all_mids = {}
+
+                    # Only query XYZ/HIP-3 dexes when the profile is opened from an
+                    # XYZ/TradFi market filter, or when explicitly enabled.
+                    include_xyz = (
+                        filters.get("market_type") in ("tradfi", "tradfi_any")
+                        or os.getenv("PROFILE_INCLUDE_XYZ_DEX", "false").lower() in ("1", "true", "yes", "on")
+                    )
+
+                    if include_xyz:
+                        hl_state, fresh_positions, dex_status = _hyperliquid_positions_all_relevant_dexes(hl_client, address, all_mids=all_mids)
+                    else:
+                        hl_state = hl_client.clearinghouse_state(address)
+                        fresh_positions = _extract_positions_from_state(hl_state or {}, all_mids=all_mids, dex="")
+                        dex_status = {"dexes_checked": ["main_fast_profile"], "dex_errors": {}}
+
+                    if hl_state or fresh_positions:
                         t["hl_state_status"] = "ok"
-                        t["account_value"] = _extract_account_value_from_state(hl_state) or t.get("account_value", 0)
-                        if not t.get("account_value"):
+                        t["dex_state_status"] = dex_status
+                        t["profile_mode"] = "fast_main_only" if not include_xyz else "xyz_dex_profile"
+                        t["account_value"] = _extract_account_value_from_state(hl_state or {}) or t.get("account_value", 0)
+
+                        # Avoid portfolio fallback during normal profile opening unless enabled.
+                        # Portfolio is slower and account value usually comes from clearinghouseState.
+                        if not t.get("account_value") and os.getenv("PROFILE_PORTFOLIO_FALLBACK", "false").lower() in ("1", "true", "yes", "on"):
                             t["account_value"] = _account_value_from_portfolio_fallback(hl_client, address, filters["window"])
                             if t.get("account_value"):
                                 t["account_value_source"] = "hyperliquid_portfolio"
-                        t["positions"] = _extract_positions_from_state(hl_state, all_mids=all_mids)
+
+                        if fresh_positions:
+                            t["positions"] = fresh_positions
+                        elif existing_positions:
+                            t["positions"] = existing_positions
+                            t["positions_status"] = "using_cached_market_filter_positions"
+                        else:
+                            t["positions"] = []
+                            t["positions_status"] = "none_returned"
+
                         t["open_positions"] = len(t["positions"])
-                        t["margin_summary"] = hl_state.get("marginSummary") or hl_state.get("crossMarginSummary") or {}
+                        t["margin_summary"] = (hl_state or {}).get("marginSummary") or (hl_state or {}).get("crossMarginSummary") or {}
                         t = _attach_current_exposure_metrics(t)
                 except Exception as exc:
                     # Do not fail trader profile just because the live state enrichment failed.
                     t["hl_state_status"] = f"error: {exc}"
+                    if existing_positions:
+                        t["positions"] = existing_positions
+                        t["open_positions"] = len(existing_positions)
+                        t = _attach_current_exposure_metrics(t)
 
-                if not t.get("account_value"):
-                    try:
-                        fallback_hl_client = HyperliquidClient()
-                        t["account_value"] = _account_value_from_portfolio_fallback(fallback_hl_client, address, filters["window"])
-                        if t.get("account_value"):
-                            t["account_value_source"] = "hyperliquid_portfolio"
-                    except Exception:
-                        pass
-
+                t = _merge_cached_row_fields(t, cached_metadata_row)
                 return _profile_cache_set(profile_cache_key, t)
 
     for vault in list_fatbot_vaults(
@@ -613,10 +1361,16 @@ def get_trader(
         limit=filters["limit"],
         min_trades=0,
         min_days_active=0,
+        market_type=filters["market_type"],
     ):
         if str(vault.get("address", "")).lower() == address.lower() or str(vault.get("vault_id", "")) == address:
             vault["history"] = []
             return _profile_cache_set(profile_cache_key, vault)
+
+    direct = _direct_live_trader_profile(address, filters)
+    if direct:
+        direct = _merge_cached_row_fields(direct, cached_metadata_row)
+        return _profile_cache_set(profile_cache_key, direct)
 
     return None
 
@@ -643,6 +1397,196 @@ def _account_value_from_portfolio_fallback(hl_client: HyperliquidClient, address
         except Exception:
             pass
     return 0.0
+
+
+def _looks_like_clearinghouse_state(value: Any) -> bool:
+    return isinstance(value, dict) and (
+        isinstance(value.get("assetPositions"), list)
+        or isinstance(value.get("positions"), list)
+        or isinstance(value.get("marginSummary"), dict)
+        or isinstance(value.get("crossMarginSummary"), dict)
+    )
+
+
+def _collect_clearinghouse_states(payload: Any, current_dex: str = "") -> List[Tuple[str, Dict[str, Any]]]:
+    """
+    Robustly normalize native / HIP-3 / Hydromancer ALL_DEXES response shapes.
+
+    Supported shapes include:
+    - normal state dict with assetPositions
+    - dict of dex -> state
+    - wrappers such as data/result/states/dexStates/clearinghouseStates
+    - list entries, including [dex, state] pairs
+    """
+    out: List[Tuple[str, Dict[str, Any]]] = []
+
+    if payload is None:
+        return out
+
+    if isinstance(payload, (list, tuple)):
+        if len(payload) == 2 and isinstance(payload[0], str) and isinstance(payload[1], dict):
+            return _collect_clearinghouse_states(payload[1], payload[0])
+        for item in payload:
+            out.extend(_collect_clearinghouse_states(item, current_dex))
+        return out
+
+    if not isinstance(payload, dict):
+        return out
+
+    dex = str(
+        payload.get("dex")
+        or payload.get("perpDex")
+        or payload.get("dexName")
+        or payload.get("name")
+        or current_dex
+        or ""
+    ).strip().lower()
+
+    if _looks_like_clearinghouse_state(payload):
+        out.append((dex, payload))
+
+    # Common wrappers first
+    for key in ("data", "result", "state", "clearinghouseState"):
+        value = payload.get(key)
+        if value is not None and value is not payload:
+            out.extend(_collect_clearinghouse_states(value, dex))
+
+    # Common ALL_DEXES wrapper shapes
+    for key in ("states", "dexStates", "clearinghouseStates", "byDex", "perpDexStates"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            for dex_key, state in value.items():
+                out.extend(_collect_clearinghouse_states(state, str(dex_key).strip().lower()))
+        elif isinstance(value, list):
+            out.extend(_collect_clearinghouse_states(value, dex))
+
+    return out
+
+
+def _state_account_value(state: Optional[Dict[str, Any]]) -> float:
+    if not isinstance(state, dict):
+        return 0.0
+    try:
+        return _extract_account_value_from_state(state)
+    except Exception:
+        return 0.0
+
+
+def _positions_from_state_objects(state_objects: List[Tuple[str, Dict[str, Any]]], all_mids: Optional[Dict[str, float]] = None) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    all_positions: List[Dict[str, Any]] = []
+    main_state: Optional[Dict[str, Any]] = None
+    dexes_checked: List[str] = []
+
+    # Prefer native/main state as account-value source if present; otherwise
+    # choose the state with the largest account value.
+    best_state: Optional[Dict[str, Any]] = None
+    best_value = -1.0
+
+    for dex_name, state in state_objects:
+        label = "main" if not dex_name else dex_name
+        if label not in dexes_checked:
+            dexes_checked.append(label)
+
+        if not dex_name and main_state is None:
+            main_state = state
+
+        value = _state_account_value(state)
+        if value > best_value:
+            best_value = value
+            best_state = state
+
+        all_positions.extend(_extract_positions_from_state(state or {}, all_mids=all_mids or {}, dex=dex_name))
+
+    if main_state is None:
+        main_state = best_state
+
+    return main_state, all_positions, {"dexes_checked": dexes_checked, "dex_errors": {}, "state_objects": len(state_objects)}
+
+
+def _hydromancer_all_dex_state(address: str) -> Optional[Dict[str, Any]]:
+    """
+    Preferred all-dex state source when Hydromancer is configured.
+
+    Hydromancer docs support dex='ALL_DEXES' for native + all HIP-3 dexes.
+    """
+    if os.getenv("USE_HYDROMANCER_ALL_DEX_STATE", "true").lower() not in ("1", "true", "yes", "on"):
+        return None
+
+    client = HydromancerClient()
+    if not client.enabled:
+        return None
+
+    return client.clearinghouse_state(address, dex=os.getenv("HYDROMANCER_ALL_DEX_VALUE", "ALL_DEXES"))
+
+
+
+def _hyperliquid_positions_all_relevant_dexes(hl_client: HyperliquidClient, address: str, all_mids: Optional[Dict[str, float]] = None) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Fetch positions from all relevant perp dexes.
+
+    Preferred source:
+    - Hydromancer clearinghouseState with dex='ALL_DEXES' when API key is configured.
+
+    Fallback source:
+    - Hyperliquid native/default clearinghouseState
+    - configured HIP-3/XYZ dex clearinghouseState calls in parallel
+    """
+    # 1) Preferred: Hydromancer ALL_DEXES
+    try:
+        hm_state = _hydromancer_all_dex_state(address)
+        if hm_state:
+            state_objects = _collect_clearinghouse_states(hm_state)
+            if state_objects:
+                main_state, positions, status = _positions_from_state_objects(state_objects, all_mids=all_mids)
+                status["source"] = "hydromancer_clearinghouseState_ALL_DEXES"
+                if positions or main_state:
+                    return main_state, positions, status
+            else:
+                # Some providers may already return a native-shaped state with no wrappers.
+                positions = _extract_positions_from_state(hm_state, all_mids=all_mids or {}, dex="")
+                status = {"source": "hydromancer_clearinghouseState_ALL_DEXES", "dexes_checked": ["unknown_shape"], "dex_errors": {}, "state_objects": 0}
+                if positions or _state_account_value(hm_state):
+                    return hm_state, positions, status
+    except Exception as exc:
+        hm_error = str(exc)
+    else:
+        hm_error = None
+
+    # 2) Fallback: official/public HL endpoint per dex
+    all_positions: List[Dict[str, Any]] = []
+    default_state: Optional[Dict[str, Any]] = None
+    dexes = [""] + [d for d in tradfi_dex_names() if d]
+    status: Dict[str, Any] = {
+        "source": "hyperliquid_clearinghouseState_per_dex",
+        "dexes_checked": ["main" if not d else d for d in dexes],
+        "dex_errors": {},
+    }
+    if hm_error:
+        status["hydromancer_all_dex_error"] = hm_error
+
+    def fetch_one(dex_name: str) -> Tuple[str, Optional[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+        try:
+            state = hl_client.clearinghouse_state(address, dex=dex_name or None)
+            positions = _extract_positions_from_state(state or {}, all_mids=all_mids or {}, dex=dex_name) if state else []
+            return dex_name, state, positions, None
+        except Exception as exc:
+            return dex_name, None, [], str(exc)
+
+    workers = min(len(dexes), int(os.getenv("PROFILE_DEX_WORKERS", "6")))
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        future_map = {executor.submit(fetch_one, dex_name): dex_name for dex_name in dexes}
+        for future in as_completed(future_map):
+            dex_name, state, positions, error = future.result()
+            label = "main" if not dex_name else dex_name
+            if error:
+                status["dex_errors"][label] = error
+                continue
+            if not dex_name:
+                default_state = state
+            all_positions.extend(positions)
+
+    return default_state, all_positions, status
+
 
 
 def _attach_current_exposure_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -693,85 +1637,102 @@ def _attach_current_exposure_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
     row["long_exposure_pct"] = row["long_exposure_share_pct"]
     row["short_exposure_pct"] = row["short_exposure_share_pct"]
 
+    # Market Type filter depends on current open-position notionals.
+    # v64 bug: these metrics were not attached, so Crypto/TradFi filters returned zero rows.
+    row = _attach_market_type_metrics(row)
+
     return row
 
 
-def _extract_positions_from_state(state: Dict[str, Any], all_mids: Optional[Dict[str, float]] = None) -> List[Dict[str, Any]]:
+def _extract_positions_from_state(state: Dict[str, Any], all_mids: Optional[Dict[str, float]] = None, dex: Optional[str] = None) -> List[Dict[str, Any]]:
     rows = []
     asset_positions = state.get("assetPositions") or state.get("positions") or []
     all_mids = all_mids or {}
 
     for item in asset_positions:
-        pos = item.get("position") if isinstance(item, dict) and "position" in item else item
-        if not isinstance(pos, dict):
-            continue
+        try:
+            pos = item.get("position") if isinstance(item, dict) and "position" in item else item
+            if not isinstance(pos, dict):
+                continue
 
-        coin = pos.get("coin") or pos.get("asset") or "?"
-        szi = float(pos.get("szi") or pos.get("size") or 0)
-        if szi == 0:
-            continue
+            coin = pos.get("coin") or pos.get("asset") or "?"
+            position_dex = str(dex or pos.get("dex") or pos.get("perpDex") or "").strip().lower()
+            szi = float(pos.get("szi") or pos.get("size") or 0)
+            if szi == 0:
+                continue
 
-        entry = float(pos.get("entryPx") or pos.get("entry") or 0)
+            entry = float(pos.get("entryPx") or pos.get("entry") or 0)
 
-        # Current account notional from HL state
-        position_value = float(pos.get("positionValue") or pos.get("notional") or 0)
+            # Current account notional from HL state
+            position_value = float(pos.get("positionValue") or pos.get("notional") or 0)
 
-        # Raw prices sometimes present directly in clearinghouseState
-        mark_raw = pos.get("markPx") or pos.get("mark") or pos.get("oraclePx") or pos.get("midPx")
-        derived_mark = float(mark_raw or 0)
+            # Raw prices sometimes present directly in clearinghouseState
+            mark_raw = pos.get("markPx") or pos.get("mark") or pos.get("oraclePx") or pos.get("midPx")
+            derived_mark = float(mark_raw or 0)
 
-        # Fallback derived mark from current notional / abs(size)
-        if derived_mark == 0 and position_value and abs(szi) > 0:
-            derived_mark = position_value / abs(szi)
+            # Fallback derived mark from current notional / abs(size)
+            if derived_mark == 0 and position_value and abs(szi) > 0:
+                derived_mark = position_value / abs(szi)
 
-        # Preferred live price source = Hyperliquid allMids
-        live_price = 0.0
-        if coin in all_mids:
-            try:
-                live_price = float(all_mids[coin])
-            except Exception:
-                live_price = 0.0
+            # Preferred live price source = Hyperliquid allMids
+            live_price = 0.0
+            if coin in all_mids:
+                try:
+                    live_price = float(all_mids[coin])
+                except Exception:
+                    live_price = 0.0
 
-        # Final price used for display / rough pnl%
-        price_for_display = live_price or derived_mark
+            # Final price used for display / rough pnl%
+            price_for_display = live_price or derived_mark
 
-        notional = abs(position_value or (szi * price_for_display if price_for_display else 0))
-        pnl = float(pos.get("unrealizedPnl") or pos.get("pnl") or 0)
+            # Prefer current positionValue from clearinghouseState.
+            # Fallbacks:
+            # - live/mark price * size
+            # - entry price * size
+            notional = abs(position_value or (szi * price_for_display if price_for_display else 0) or (szi * entry if entry else 0))
+            pnl = float(pos.get("unrealizedPnl") or pos.get("pnl") or 0)
 
-        leverage_obj = pos.get("leverage")
-        if isinstance(leverage_obj, dict):
-            leverage = float(leverage_obj.get("value") or 0)
-        else:
-            leverage = float(leverage_obj or 0)
-
-        liq_raw = pos.get("liquidationPx") or pos.get("liqPx") or 0
-        liq_price = float(liq_raw or 0)
-
-        pnl_pct = 0
-        if entry and abs(szi) > 0 and price_for_display:
-            if szi > 0:
-                pnl_pct = ((price_for_display - entry) / entry) * 100
+            leverage_obj = pos.get("leverage")
+            if isinstance(leverage_obj, dict):
+                leverage = float(leverage_obj.get("value") or 0)
             else:
-                pnl_pct = ((entry - price_for_display) / entry) * 100
+                leverage = float(leverage_obj or 0)
 
-        rows.append({
-            "coin": coin,
-            "icon_url": get_token_icon_url(coin),
-            "side": "Long" if szi > 0 else "Short",
-            "notional": notional,
-            "size": abs(szi),
-            "entry": entry,
-            "mark": derived_mark,
-            "live_price": live_price,
-            "display_price": price_for_display,
-            "price_source": "allMids" if live_price else ("clearinghouseState" if derived_mark else "unknown"),
-            "pnl": pnl,
-            "pnl_pct": pnl_pct,
-            "leverage": leverage,
-            "liq_price": liq_price,
-        })
+            liq_raw = pos.get("liquidationPx") or pos.get("liqPx") or 0
+            liq_price = float(liq_raw or 0)
+
+            pnl_pct = 0
+            if entry and abs(szi) > 0 and price_for_display:
+                if szi > 0:
+                    pnl_pct = ((price_for_display - entry) / entry) * 100
+                else:
+                    pnl_pct = ((entry - price_for_display) / entry) * 100
+
+            rows.append({
+                "coin": coin,
+                "dex": position_dex,
+                "qualified_coin": f"{position_dex}:{coin}" if position_dex else coin,
+                "icon_url": get_token_icon_url(coin),
+                "side": "Long" if szi > 0 else "Short",
+                "notional": notional,
+                "size": abs(szi),
+                "entry": entry,
+                "mark": derived_mark,
+                "live_price": live_price,
+                "display_price": price_for_display,
+                "price_source": "allMids" if live_price else ("clearinghouseState" if derived_mark else "unknown"),
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "leverage": leverage,
+                "liq_price": liq_price,
+            })
+        except Exception as exc:
+            # Never break the whole profile because one position has a weird/empty field.
+            print(f"[Hyperliquid] skipped malformed position: {exc}")
+            continue
 
     return rows
+
 
 
 def list_wallets() -> List[Dict[str, Any]]:

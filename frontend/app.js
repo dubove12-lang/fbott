@@ -25,6 +25,7 @@ let state = {
     minTrades: 0,
     minDaysActive: 0,
     limit: 50,
+    marketType: 'all',
   },
   favourites: new Set(JSON.parse(localStorage.getItem('fatbot_copy_favourites') || '[]')),
   wizardStep: 0,
@@ -119,7 +120,31 @@ function walletBadgeLabel(mode) {
 function coinClass(coin) {
   return (coin || '').toLowerCase();
 }
-function tokenIconUrl(coin) {
+function isXyzDexCoin(coin, dex = '') {
+  const raw = String(coin || '').trim();
+  const upper = raw.toUpperCase();
+  const dexUpper = String(dex || '').trim().toUpperCase();
+
+  if (dexUpper === 'XYZ') return true;
+  if (upper.startsWith('XYZ:')) return true;
+  if (upper.includes(':XYZ:')) return true;
+  if (upper.includes('XYZ')) return true;
+
+  return false;
+}
+
+function displayCoinLabel(coin) {
+  const raw = String(coin || '?').trim();
+  if (!raw) return '?';
+  const parts = raw.split(':').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : raw;
+}
+
+function tokenIconUrl(coin, dex = '') {
+  if (isXyzDexCoin(coin, dex)) {
+    return '/static/assets/xyz-dex-logo.png';
+  }
+
   const c = String(coin || '').toUpperCase().split(':').pop();
   const icons = {
     BTC: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png',
@@ -136,19 +161,28 @@ function tokenIconUrl(coin) {
     SUI: 'https://assets.coingecko.com/coins/images/26375/large/sui-ocean-square.png',
     WLD: 'https://assets.coingecko.com/coins/images/31069/large/worldcoin.jpeg',
     FARTCOIN: 'https://assets.coingecko.com/coins/images/50891/large/fart.jpg',
-    ZEC: 'https://assets.coingecko.com/coins/images/486/large/circle-zcash-color.png',
+    TRX: 'https://assets.coingecko.com/coins/images/1094/large/tron-logo.png',
     TAO: 'https://assets.coingecko.com/coins/images/28452/large/ARUsPeNQ_400x400.jpeg',
+    TON: 'https://assets.coingecko.com/coins/images/17980/large/ton_symbol.png',
+    NEAR: 'https://assets.coingecko.com/coins/images/10365/large/near.jpg',
+    ADA: 'https://assets.coingecko.com/coins/images/975/large/cardano.png',
+    ICP: 'https://assets.coingecko.com/coins/images/14495/large/Internet_Computer_logo.png',
+    SEI: 'https://assets.coingecko.com/coins/images/28205/large/Sei_Logo_-_Transparent.png',
+    PUMP: 'https://assets.coingecko.com/coins/images/34478/large/pump.png',
+    ZEC: 'https://assets.coingecko.com/coins/images/486/large/circle-zcash-color.png',
+    MSFT: 'https://assets.coingecko.com/coins/images/0/large/microsoft.png',
   };
   return icons[c] || '';
 }
 
-function coinIconHtml(coin, iconUrl = '') {
+function coinIconHtml(coin, iconUrl = '', dex = '') {
   const safeCoin = (coin || '?').toString();
-  const src = iconUrl || tokenIconUrl(safeCoin);
+  const label = displayCoinLabel(safeCoin);
+  const src = iconUrl || tokenIconUrl(safeCoin, dex);
   if (src) {
-    return `<img class="coin-img" src="${src}" alt="${safeCoin}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'coin-icon ' + coinClass('${safeCoin}'), textContent: '${safeCoin[0] || '?'}'}))">`;
+    return `<img class="coin-img" src="${src}" alt="${label}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'coin-icon ' + coinClass('${label}'), textContent: '${label[0] || '?'}'}))">`;
   }
-  return `<div class="coin-icon ${coinClass(safeCoin)}">${safeCoin[0] || '?'}</div>`;
+  return `<div class="coin-icon ${coinClass(label)}">${label[0] || '?'}</div>`;
 }
 function saveFavourites() {
   localStorage.setItem('fatbot_copy_favourites', JSON.stringify([...state.favourites]));
@@ -203,6 +237,7 @@ function leaderboardQueryString() {
     minTrades: String(f.minTrades ?? 0),
     minDaysActive: String(f.minDaysActive ?? 0),
     limit: String(f.limit ?? 50),
+    marketType: f.marketType || 'all',
   });
   return params.toString();
 }
@@ -214,11 +249,12 @@ function readLeaderboardFiltersFromDom() {
     minTrades: Number(document.getElementById('filterMinTrades')?.value || 0),
     minDaysActive: Number(document.getElementById('filterMinDays')?.value || 0),
     limit: Number(document.getElementById('filterLimit')?.value || 50),
+    marketType: document.getElementById('filterMarketType')?.value || 'all',
   };
 }
 
 function bindLeaderboardFilters() {
-  ['filterWindow', 'filterSortBy', 'filterMinTrades', 'filterMinDays', 'filterLimit'].forEach(id => {
+  ['filterWindow', 'filterSortBy', 'filterMinTrades', 'filterMinDays', 'filterLimit', 'filterMarketType'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', async () => {
@@ -227,23 +263,33 @@ function bindLeaderboardFilters() {
       const list = document.getElementById('traderList');
       if (list) {
         list.classList.add('loading');
-        list.innerHTML = 'Loading leaderboard...';
+        const f = state.leaderboardFilters || {};
+        const extra = f.marketType && f.marketType !== 'all'
+          ? 'Loading filters in parallel...'
+          : 'Loading leaderboard...';
+        list.innerHTML = extra;
       }
 
-      try {
-        const q = leaderboardQueryString();
-        const [traders, fatbotVaults] = await Promise.all([
-          api(`/api/traders?${q}`),
-          api(`/api/fatbot-vaults?${q}`),
-        ]);
-        state.traders = traders;
-        state.fatbotVaults = fatbotVaults;
-        renderLeaderboardTabs();
-        renderTraders();
-      } catch (err) {
-        console.error(err);
+      const q = leaderboardQueryString();
+      const traderPromise = api(`/api/traders?${q}`)
+        .then(traders => {
+          state.traders = traders || [];
+          renderLeaderboardTabs();
+          renderTraders();
+        });
+
+      const vaultPromise = api(`/api/fatbot-vaults?${q}`)
+        .then(fatbotVaults => {
+          state.fatbotVaults = fatbotVaults || [];
+          renderLeaderboardTabs();
+          renderTraders();
+        });
+
+      const results = await Promise.allSettled([traderPromise, vaultPromise]);
+      const rejected = results.filter(r => r.status === 'rejected');
+      if (rejected.length && !state.traders.length && !state.fatbotVaults.length) {
         const list = document.getElementById('traderList');
-        if (list) list.innerHTML = `<div class="empty-state">Filter load failed: ${err.message || err}</div>`;
+        if (list) list.innerHTML = `<div class="empty-state">Filter load failed: ${rejected[0].reason?.message || rejected[0].reason}</div>`;
       }
     });
   });
@@ -251,27 +297,57 @@ function bindLeaderboardFilters() {
 
 async function loadAll() {
   ensureUiState();
-  const [summary, traders, wallets, livePositions, pools, fatbotVaults] = await Promise.all([
-    api('/api/summary'),
-    api(`/api/traders?${leaderboardQueryString()}`),
-    api('/api/wallets'),
-    api('/api/live-positions'),
-    api('/api/pools'),
-    api(`/api/fatbot-vaults?${leaderboardQueryString()}`),
-  ]);
-  state.traders = traders;
-  state.wallets = wallets;
-  state.livePositions = livePositions;
-  state.pools = pools;
-  state.fatbotVaults = fatbotVaults;
+  const q = leaderboardQueryString();
+  const errors = [];
 
-  renderSummary(summary);
-  renderLeaderboardTabs();
-  renderTraders();
-  renderCopySections(wallets);
-  renderMultiLeaderboard(pools, wallets);
-  renderLiveTraderFeed(livePositions);
+  const safe = (key, promise, onData) => {
+    promise
+      .then(data => {
+        onData(data);
+      })
+      .catch(err => {
+        console.error(`${key} load failed`, err);
+        errors.push(`${key}: ${err.message || err}`);
+        const list = document.getElementById('traderList');
+        if (key === 'traders' && list && !(state.traders || []).length) {
+          list.innerHTML = `<div class="empty-state">Top Traders failed to load.<br><small>${err.message || err}</small></div>`;
+        }
+      });
+  };
+
+  // Render each section immediately when its endpoint finishes instead of waiting
+  // for all endpoints. Functionality is the same, perceived loading is much faster.
+  safe('summary', api('/api/summary'), data => renderSummary(data));
+
+  safe('wallets', api('/api/wallets'), data => {
+    state.wallets = data || [];
+    renderCopySections(state.wallets);
+    renderMultiLeaderboard(state.pools || [], state.wallets);
+  });
+
+  safe('livePositions', api('/api/live-positions'), data => {
+    state.livePositions = data || [];
+    renderLiveTraderFeed(state.livePositions);
+  });
+
+  safe('pools', api('/api/pools'), data => {
+    state.pools = data || [];
+    renderMultiLeaderboard(state.pools, state.wallets || []);
+  });
+
+  safe('traders', api(`/api/traders?${q}`), data => {
+    state.traders = data || [];
+    renderLeaderboardTabs();
+    renderTraders();
+  });
+
+  safe('fatbotVaults', api(`/api/fatbot-vaults?${q}`), data => {
+    state.fatbotVaults = data || [];
+    renderLeaderboardTabs();
+    renderTraders();
+  });
 }
+
 
 function renderSummary(summary) {
   const metricValue = $('metricValue');
@@ -329,6 +405,11 @@ function filteredTraders() {
 
 
 function renderLeaderboardTabs() {
+  const myTab = document.querySelector('[data-leader-tab="my"]');
+  if (myTab) {
+    myTab.textContent = state.mainView === 'fatbot-vaults' ? 'My Vaults' : 'My Copytrading';
+  }
+
   document.querySelectorAll('[data-leader-tab]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.leaderTab === state.activeLeaderTab);
   });
@@ -338,7 +419,8 @@ function renderLeaderboardTabs() {
 
   const f = state.leaderboardFilters || {};
   const sortLabel = f.sortBy === 'volume' ? 'Volume' : (f.sortBy === 'winRate' ? 'Win Rate' : 'PnL');
-  const filterText = `${String(f.window || '30d').toUpperCase()} · sort ${sortLabel} · min trades ${f.minTrades ?? 0} · min active days ${f.minDaysActive ?? 0} · limit ${f.limit ?? 50}`;
+  const marketLabel = f.marketType === 'tradfi' ? 'TradFi ≥40% positions' : (f.marketType === 'crypto' ? 'Crypto >70%' : 'All markets');
+  const filterText = `${String(f.window || '30d').toUpperCase()} · sort ${sortLabel} · min trades ${f.minTrades ?? 0} · min active days ${f.minDaysActive ?? 0} · limit ${f.limit ?? 50} · ${marketLabel}`;
 
   if (state.activeLeaderTab === 'top') {
     hint.textContent = `Top traders ranked by external PnL leaderboard data. ${filterText}`;
@@ -347,7 +429,7 @@ function renderLeaderboardTabs() {
   } else if (state.activeLeaderTab === 'favourite') {
     hint.textContent = 'Favourite traders and vaults saved locally in this browser.';
   } else {
-    hint.textContent = 'Your active copied traders and copied FatBot vaults.';
+    hint.textContent = 'Your active copied wallets and copied FatBot vaults.';
   }
 }
 
@@ -361,11 +443,15 @@ function renderTraders() {
     const msg = state.activeLeaderTab === 'favourite'
       ? 'No favourites yet. Click the star on a trader or vault.'
       : state.activeLeaderTab === 'my'
-        ? 'No copied traders or vaults yet.'
+        ? 'No copied wallets or vaults yet.'
         : state.activeLeaderTab === 'fatbot'
           ? 'No FatBot vaults available.'
           : 'No traders available.';
-    el.innerHTML = `<div class="empty-state">${msg}</div>`;
+    const f = state.leaderboardFilters || {};
+    const marketMsg = f.marketType && f.marketType !== 'all'
+      ? `<br><small>Market type uses current open positions from Hyperliquid. Wallets with no current positions are excluded.</small>`
+      : '';
+    el.innerHTML = `<div class="empty-state">${msg}${marketMsg}</div>`;
     return;
   }
 
@@ -394,12 +480,12 @@ function renderTraders() {
           <strong class="${positiveClass(pnlNumber(t))}">${pnlDisplay(t)}</strong>
         </div>
         <div class="optional-leader-col">
-          <div class="row-sub">Volume</div>
-          <strong>${isLive ? fmtUsd(t.volume || t.volume_traded || 0) : '—'}</strong>
+          <div class="row-sub">Account Value</div>
+          <strong>${moneyOrDash(t.account_value)}</strong>
         </div>
         <div class="optional-leader-col">
-          <div class="row-sub">${grossExposureDisplay(t) !== '—' ? 'Gross' : 'Win'}</div>
-          <strong>${grossExposureDisplay(t) !== '—' ? grossExposureDisplay(t) : (isLive ? winRateDisplay(t) : '—')}</strong>
+          <div class="row-sub">Win</div>
+          <strong>${isLive ? winRateDisplay(t) : '—'}</strong>
         </div>
         <button class="copy-btn" data-copy="${t.address}" data-vault-copy="${isVault ? '1' : ''}">${actionLabel}</button>
       </div>
@@ -581,8 +667,8 @@ function walletExpandedPanel(w, isClosing) {
   const positions = w.positions || [];
   const positionsHtml = positions.length ? positions.map(p => `
     <div class="wallet-position-row">
-      ${coinIconHtml(p.coin, p.icon_url || tokenIconUrl(p.coin))}
-      <div><div class="row-title coin-side ${sideClass(p.side)}">${p.coin}</div><div class="row-sub">${p.side}</div></div>
+      ${coinIconHtml(p.coin, p.icon_url || tokenIconUrl(p.coin, p.dex), p.dex)}
+      <div><div class="row-title coin-side ${sideClass(p.side)}">${displayCoinLabel(p.coin)}</div><div class="row-sub">${p.side}</div></div>
       <div><div class="row-sub">Target</div><strong>${fmtUsd(p.target_notional)}</strong></div>
       <div><div class="row-sub">Actual</div><strong>${fmtUsd(p.actual_notional)}</strong></div>
       <div><div class="row-sub">Drift</div><strong class="${positiveClass(p.drift_pct)}">${fmtPct(p.drift_pct)}</strong></div>
@@ -618,53 +704,154 @@ function walletExpandedPanel(w, isClosing) {
   `;
 }
 
+function hotWalletCopiedUsers(item, index = 0) {
+  const key = String(item?.vault_id || item?.address || item?.label || index);
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) hash = ((hash << 5) - hash) + key.charCodeAt(i);
+  return 18 + (Math.abs(hash) % 230);
+}
+
+function hotWalletVaultActivity(item, index = 0) {
+  const key = String(item?.vault_id || item?.address || item?.label || index);
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) hash = ((hash << 5) - hash) + key.charCodeAt(i);
+  return 3 + (Math.abs(hash) % 42);
+}
+
+function buildHotWalletRows(pools = [], wallets = []) {
+  const maxRows = 12;
+
+  if (isCopytradingView()) {
+    const traderRows = (state.traders || []).slice(0, 8).map((item, index) => ({
+      ...item,
+      hot_kind: 'wallet',
+      hot_metric_label: 'Copied by users',
+      hot_metric_value: hotWalletCopiedUsers(item, index),
+      hot_sort_value: hotWalletCopiedUsers(item, index),
+    }));
+
+    const indexRows = (state.fatbotVaults || []).slice(0, 4).map((item, index) => ({
+      ...item,
+      hot_kind: 'index',
+      hot_metric_label: 'Copied by users',
+      hot_metric_value: hotWalletCopiedUsers(item, index + 100),
+      hot_sort_value: hotWalletCopiedUsers(item, index + 100),
+    }));
+
+    return [...traderRows, ...indexRows]
+      .sort((a, b) => Number(b.hot_sort_value || 0) - Number(a.hot_sort_value || 0))
+      .slice(0, maxRows);
+  }
+
+  const vaultRows = (state.fatbotVaults || []).map((item, index) => ({
+    ...item,
+    hot_kind: 'vault',
+    hot_metric_label: 'Active in FatBot Vaults',
+    hot_metric_value: hotWalletVaultActivity(item, index),
+    hot_sort_value: hotWalletVaultActivity(item, index),
+  }));
+
+  const poolRows = (pools || []).map((pool, index) => {
+    const wallet = (wallets || []).find(w => Number(w.pool_id) === Number(pool.id)) || (wallets || []).find(w => Number(w.id) === Number(pool.wallet_id)) || {};
+    const members = pool.members || [];
+    return {
+      ...wallet,
+      address: wallet.wallet_address || wallet.address || `pool-${pool.id}`,
+      label: pool.name || `FatBot Vault #${pool.id}`,
+      source: 'fatbot_vault',
+      vault_id: `pool-${pool.id}`,
+      total_pnl: Number(wallet.total_pnl || 0),
+      pnl_30d: Number(wallet.total_pnl || 0),
+      account_value: Number(wallet.value || 0),
+      copied_members: members,
+      hot_kind: 'vault',
+      hot_metric_label: 'Active in FatBot Vaults',
+      hot_metric_value: Math.max(members.length || 0, hotWalletVaultActivity(pool, index)),
+      hot_sort_value: Math.max(members.length || 0, hotWalletVaultActivity(pool, index)),
+    };
+  });
+
+  return [...vaultRows, ...poolRows]
+    .sort((a, b) => Number(b.hot_sort_value || 0) - Number(a.hot_sort_value || 0))
+    .slice(0, maxRows);
+}
+
+function hotWalletSubtitle() {
+  return isCopytradingView()
+    ? 'Wallets and indexes most copied by users.'
+    : 'Wallets currently active inside FatBot Vaults.';
+}
+
+
 function renderMultiLeaderboard(pools, wallets) {
   const el = safeClassRemove('multiLeaderboard', 'loading');
   if (!el) return;
 
-  const rows = (pools || []).map(pool => {
-    const wallet = wallets.find(w => Number(w.pool_id) === Number(pool.id)) || wallets.find(w => Number(w.id) === Number(pool.wallet_id)) || {};
-    const members = pool.members || [];
-    const pnl = Number(wallet.total_pnl || 0);
-    const value = Number(wallet.value || 0);
-    return { pool, wallet, members, pnl, value };
-  }).sort((a, b) => b.pnl - a.pnl);
+  const title = document.getElementById('hotWalletsTitle');
+  const subtitle = document.getElementById('hotWalletsSubtitle');
+  if (title) title.textContent = 'Hot wallets';
+  if (subtitle) subtitle.textContent = hotWalletSubtitle();
+
+  const rows = buildHotWalletRows(pools || [], wallets || []);
 
   if (!rows.length) {
     el.innerHTML = `
       <div class="empty-state compact-empty">
-        No multi copytrading wallets yet. Create one in the Multi Copytrading section.
+        No hot wallets yet. Data will appear here after leaderboard and copy wallet data loads.
       </div>
     `;
     return;
   }
 
-  el.innerHTML = rows.map((row, i) => `
-    <div class="multi-rank-row">
-      <div class="rank-badge">#${i + 1}</div>
-      <div>
-        <div class="row-title">${row.pool.name || `Multi Copy #${row.pool.id}`}</div>
-        <div class="row-sub">${row.members.length || 0} copied wallets · ${row.members.map(m => shortAddress(m.trader_address)).join(' · ')}</div>
-      </div>
-      <div>
-        <div class="row-sub">Value</div>
-        <strong>${fmtUsd(row.value)}</strong>
-      </div>
-      <div>
-        <div class="row-sub">PnL</div>
-        <strong class="${positiveClass(row.pnl)}">${fmtUsd(row.pnl)}</strong>
-      </div>
-      <button class="copy-btn small-copy" data-copy-multi="${row.pool.id}">Copy Vault</button>
-    </div>
-  `).join('');
+  el.innerHTML = rows.map((t, i) => {
+    const isVault = t.source === 'fatbot_vault' || t.hot_kind === 'vault' || t.hot_kind === 'index';
+    const isLive = isHydro(t) || isVault;
+    const title = isVault ? (t.label || shortAddress(t.address)) : shortAddress(t.address);
+    const subtitle = isVault
+      ? (t.hot_kind === 'index' ? 'FatBot index / vault' : 'FatBot Vault')
+      : 'Hydromancer PnL leaderboard';
+    const actionLabel = isVault ? 'Copy Vault' : 'Copy Wallet';
+    const copyTarget = t.address || t.wallet_address || t.vault_id;
 
-  el.querySelectorAll('[data-copy-multi]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const pool = state.pools.find(p => String(p.id) === String(btn.dataset.copyMulti));
-      openVaultCopySettings(pool);
+    return `
+      <div class="trader-row hydro-trader-row hot-wallet-row ${isVault ? 'fatbot-vault-row' : ''}" data-hot-address="${copyTarget}" data-hot-vault="${isVault ? '1' : ''}">
+        ${leaderLogoHtml(t, i)}
+        <div class="hot-wallet-main">
+          <div class="row-title">${title}</div>
+          <div class="row-sub">${subtitle}</div>
+        </div>
+        <div class="hot-wallet-metric">
+          <div class="row-sub">${t.hot_metric_label || (isCopytradingView() ? 'Copied by users' : 'Active in FatBot Vaults')}</div>
+          <strong>${Number(t.hot_metric_value || 0).toLocaleString()}</strong>
+        </div>
+        <div class="hot-wallet-pnl">
+          <div class="row-sub">PnL</div>
+          <strong class="${positiveClass(pnlNumber(t))}">${pnlDisplay(t)}</strong>
+        </div>
+        <button class="copy-btn small-copy" data-hot-copy="${copyTarget}" data-hot-vault-copy="${isVault ? '1' : ''}">${actionLabel}</button>
+      </div>
+    `;
+  }).join('');
+
+  el.querySelectorAll('.hot-wallet-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.dataset.hotCopy) return;
+      const address = row.dataset.hotAddress;
+      if (!row.dataset.hotVault || row.dataset.hotVault !== '1') {
+        openTrader(address);
+      }
+    });
+  });
+
+  el.querySelectorAll('[data-hot-copy]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCopyWizard(btn.dataset.hotCopy);
     });
   });
 }
+
+
 
 function firstFreeMultiSlot() {
   return Math.min(multiSlotLimit(), multiWalletCount() + 1);
@@ -813,8 +1000,8 @@ function renderLivePositions(positions) {
   }
   el.innerHTML = positions.slice(0, 7).map(p => `
     <div class="position-row">
-      ${coinIconHtml(p.coin, p.icon_url || tokenIconUrl(p.coin))}
-      <div><div class="row-title">${p.coin}</div><div class="row-sub">${p.wallet_label} · ${p.side}</div></div>
+      ${coinIconHtml(p.coin, p.icon_url || tokenIconUrl(p.coin, p.dex), p.dex)}
+      <div><div class="row-title">${displayCoinLabel(p.coin)}</div><div class="row-sub">${p.wallet_label} · ${p.side}</div></div>
       <div><div class="row-sub">Actual</div><strong>${fmtUsd(p.actual_notional)}</strong></div>
       <div><div class="row-sub">Drift</div><strong class="${positiveClass(p.drift_pct)}">${fmtPct(p.drift_pct)}</strong></div>
       <div><div class="row-sub">PnL</div><strong class="${positiveClass(p.pnl)}">${fmtUsd(p.pnl)}</strong></div>
@@ -829,13 +1016,48 @@ function renderMoves(positions) {
   const items = positions.slice(0, 3);
   el.innerHTML = items.map(p => `
     <div class="move-row">
-      <span>${p.coin} ${String(p.side || '').toLowerCase()} copied</span>
+      <span>${displayCoinLabel(p.coin)} ${String(p.side || '').toLowerCase()} copied</span>
       <strong class="${positiveClass(p.pnl)}">${fmtUsd(p.pnl)}</strong>
     </div>
   `).join('') || `
     <div class="move-row"><span>No recent execution moves.</span><strong>$0.00</strong></div>
   `;
 }
+
+function mergeTraderPreviewFields(trader, preview) {
+  if (!trader || !preview) return trader;
+
+  const merged = { ...trader };
+  const keys = [
+    'account_value',
+    'account_value_source',
+    'rank',
+    'total_pnl',
+    'pnl_30d',
+    'pnl_90d',
+    'volume',
+    'volume_traded',
+    'win_rate',
+    'total_trades',
+    'trades',
+    'days_active',
+    'account_age_days',
+    'total_funding',
+    'funding',
+  ];
+
+  keys.forEach(key => {
+    const current = merged[key];
+    const incoming = preview[key];
+    const missing = current === undefined || current === null || current === '' || current === 0 || current === '0';
+    const hasIncoming = incoming !== undefined && incoming !== null && incoming !== '' && incoming !== 0 && incoming !== '0';
+    if (missing && hasIncoming) merged[key] = incoming;
+  });
+
+  merged.merged_preview_row = true;
+  return merged;
+}
+
 
 async function openTrader(address) {
   const el = document.getElementById('traderModalContent');
@@ -862,7 +1084,7 @@ async function openTrader(address) {
       <div class="mini-spinner"></div>
       <div>
         <strong>Loading live profile...</strong>
-        <p class="muted">Fetching cached leaderboard data and Hyperliquid live state.</p>
+        <p class="muted">Opening cached profile and live state.</p>
       </div>
     </div>
   `;
@@ -877,13 +1099,24 @@ async function openTrader(address) {
   try {
     trader = await api(`/api/traders/${encodeURIComponent(address)}?${leaderboardQueryString()}`);
   } catch (err) {
-    el.innerHTML += `<div class="empty-state">Failed to load trader profile: ${err.message || err}</div>`;
-    return;
+    if (preview) {
+      trader = {
+        ...preview,
+        history: [],
+        profile_mode: 'frontend_visible_row_fallback',
+        profile_warning: `Profile API failed: ${err.message || err}. Showing the exact visible leaderboard row. If this row has no positions, the backend profile lookup still needs debugging.`,
+      };
+    } else {
+      el.innerHTML += `<div class="empty-state">Failed to load trader profile: ${err.message || err}<br><small>Try refreshing the leaderboard once; this can happen if the filtered scan cache changed.</small></div>`;
+      return;
+    }
   }
+
+  trader = mergeTraderPreviewFields(trader, preview);
 
   state.selectedTrader = trader;
   const isLive = isHydro(trader) || trader.source === 'fatbot_vault';
-  const positions = trader.positions || [];
+  const positions = Array.isArray(trader.positions) ? trader.positions : [];
 
   const liveCards = isLive ? `
       <div class="detail-card"><span>${trader.source === "fatbot_vault" ? `${String((state.leaderboardFilters || {}).window || "30d").toUpperCase()} PnL` : `PnL Window (${String((state.leaderboardFilters || {}).window || "30d").toUpperCase()})`}</span><strong class="${positiveClass(trader.source === "fatbot_vault" ? (trader.pnl_pct ?? trader.pnl_30d) : trader.total_pnl)}">${trader.source === "fatbot_vault" ? fmtPct(trader.pnl_pct ?? trader.pnl_30d ?? 0) : fmtUsd(trader.total_pnl || 0)}</strong></div>
@@ -919,6 +1152,8 @@ async function openTrader(address) {
       <button class="primary trader-head-copy" data-modal-copy="${trader.address}">COPY THIS TRADER</button>
     </div>
 
+    ${trader.profile_warning ? `<div class="empty-state profile-warning-box">${trader.profile_warning}</div>` : ''}
+
     <div class="detail-grid hydro-detail-grid">
       ${liveCards}
     </div>
@@ -930,15 +1165,15 @@ async function openTrader(address) {
     <div class="position-list">
       ${positions.length ? positions.map(p => `
         <div class="position-row trader-live-position-row">
-          ${coinIconHtml(p.coin, p.icon_url)}
-          <div><div class="row-title coin-side ${sideClass(p.side)}">${p.coin}</div><div class="row-sub">${p.side} · ${Number(p.leverage || 0).toFixed(1)}x</div></div>
+          ${coinIconHtml(p.coin, p.icon_url, p.dex)}
+          <div><div class="row-title coin-side ${sideClass(p.side)}">${displayCoinLabel(p.coin)}</div><div class="row-sub">${p.side} · ${Number(p.leverage || 0).toFixed(1)}x</div></div>
           <div><div class="row-sub">Notional</div><strong>${fmtUsd(p.notional)}</strong></div>
           <div><div class="row-sub">Entry</div><strong>${p.entry ? Number(p.entry).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "—"}</strong></div>
           <div><div class="row-sub">Live Price</div><strong>${(p.live_price || p.display_price) ? Number(p.live_price || p.display_price).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "—"}</strong></div>
           <div><div class="row-sub">PnL</div><strong class="${positiveClass(p.pnl)}">${fmtUsd(p.pnl)}</strong></div>
           <div><div class="row-sub">Liq</div><strong>${p.liq_price ? Number(p.liq_price).toLocaleString() : '—'}</strong></div>
         </div>
-      `).join('') : `<p class="muted">${isLive ? 'No current open Hyperliquid positions for this wallet. Current long/short and gross exposure are therefore 0.' : 'No live positions available for this trader yet.'}</p>`}
+      `).join('') : `<p class="muted">${isLive ? 'No position rows were returned by the profile endpoint. This is a data-fetch diagnostic state, not a confirmed zero-position result.' : 'No live positions available for this trader yet.'}</p>`}
     </div>
   `;
 
@@ -1539,7 +1774,9 @@ function bindMainNavigation() {
       document.querySelectorAll('[data-main-view]').forEach(x => x.classList.remove('active'));
       btn.classList.add('active');
       state.mainView = btn.dataset.mainView === 'fatbot-vaults' ? 'fatbot-vaults' : 'copytrading';
+      renderLeaderboardTabs();
       renderCopySections(state.wallets || []);
+      renderMultiLeaderboard(state.pools || [], state.wallets || []);
       state.liveFeedTransactions = generateRandomFeedTransactions(50);
       renderRandomLiveFeed();
     });
@@ -1569,7 +1806,7 @@ readLeaderboardFiltersFromDom();
 
 loadAll().catch(err => {
   console.error(err);
-  document.body.insertAdjacentHTML('afterbegin', `<div style="background:#ff657f;color:white;padding:12px;text-align:center;font-weight:900">API error: ${err.message}</div>`);
+  document.body.insertAdjacentHTML('afterbegin', `<div style="background:#ff657f;color:white;padding:12px;text-align:center;font-weight:900">Initial load error: ${err.message}</div>`);
 });
 
 
