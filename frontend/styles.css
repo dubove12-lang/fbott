@@ -1937,3 +1937,34 @@ button[data-close="traderModal"] {
     padding-right: 12px;
   }
 }
+
+
+/* v97: make 100% browser zoom visually match previous 80% local browser zoom.
+   Chrome/Edge support CSS zoom. Width/height are expanded so the scaled app
+   still fills the viewport instead of leaving blank space. */
+:root {
+  --fatbot-ui-zoom: 0.8;
+  --fatbot-ui-zoom-inverse: 1.25;
+}
+
+@media (min-width: 1000px) {
+  html {
+    overflow-x: hidden;
+  }
+
+  body {
+    zoom: var(--fatbot-ui-zoom);
+    width: calc(100vw * var(--fatbot-ui-zoom-inverse));
+    min-height: calc(100vh * var(--fatbot-ui-zoom-inverse));
+    overflow-x: hidden;
+  }
+}
+
+/* Keep normal scale on narrow screens where 80% zoom would make touch targets too small. */
+@media (max-width: 999px) {
+  body {
+    zoom: 1;
+    width: 100vw;
+    min-height: 100vh;
+  }
+}

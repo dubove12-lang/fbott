@@ -1238,3 +1238,48 @@ Changes:
   - Copied by users / Active in FatBot Vaults
   - PnL
   - Copy button
+
+
+## v95 Reliable PnL display
+Reverted Hydromancer Top Traders PnL back to USD.
+
+Reason:
+- Calculating trader PnL % as `totalPnl / current account_value` is not reliable.
+- If a trader withdraws funds, current account value can be small and the PnL %
+  becomes meaningless or massively inflated.
+- This version does not invent a percent return for external traders.
+
+Display rule:
+- Hydromancer Top Traders / normal wallets: selected-window PnL in USD from Hydromancer.
+- FatBot Vaults: keep existing percentage PnL.
+- If we later get a reliable return/ROI field or point-in-time equity baseline from
+  Hydromancer, we can add a proper percentage again.
+
+
+## v96 Unified PnL in USD
+Changed display so both external wallets and FatBot Vaults show PnL in USD.
+
+Reason:
+- Trader PnL % is not reliable when current account value is distorted by deposits/withdrawals.
+- To keep the UI consistent, FatBot Vaults are also shown in USD.
+
+Display rule:
+- Hydromancer Top Traders / external wallets: selected-window `totalPnl` in USD.
+- FatBot Vaults: real USD PnL field where available.
+- Percentage PnL is not shown in the main wallet/vault rows.
+
+
+## v97 Default 80% visual zoom
+Makes the app at normal browser zoom (`100%`) visually look like the previous local Chrome `80%` zoom.
+
+Implementation:
+- Adds CSS-level app zoom:
+  - `--fatbot-ui-zoom: 0.8`
+  - `--fatbot-ui-zoom-inverse: 1.25`
+- Expands body width/height before zoom so the scaled UI still fills the viewport.
+- Applies only on screens wider than 1000px.
+- Mobile/narrow screens stay at normal scale.
+
+Changed:
+- `frontend/styles.css`
+- `frontend/index.html`

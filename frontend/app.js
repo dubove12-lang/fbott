@@ -52,13 +52,32 @@ function sideClass(side) {
 function isHydro(t) {
   return t && t.source === 'hydromancer';
 }
-function pnlDisplay(t) {
-  if (t && t.source === 'fatbot_vault') return fmtPct(t.pnl_pct ?? t.pnl_30d ?? 0);
-  return isHydro(t) ? fmtUsd(t.total_pnl || 0) : fmtPct(t.pnl_30d || 0);
+function pnlUsdValue(t) {
+  if (!t) return 0;
+
+  if (t.source === 'fatbot_vault') {
+    // FatBot Vault rows already carry real USD PnL where available.
+    // Do not use pnl_pct for display if we want a unified USD column.
+    return Number(
+      t.pnl ??
+      t.total_pnl ??
+      t.pnl_usd ??
+      t.pnl_30d_usd ??
+      t.pnl_30d ??
+      0
+    );
+  }
+
+  if (isHydro(t)) return Number(t.total_pnl || 0);
+  return Number(t.total_pnl ?? t.pnl ?? t.pnl_30d ?? 0);
 }
+
+function pnlDisplay(t) {
+  return fmtUsd(pnlUsdValue(t));
+}
+
 function pnlNumber(t) {
-  if (t && t.source === 'fatbot_vault') return Number(t.pnl_pct ?? t.pnl_30d ?? 0);
-  return isHydro(t) ? Number(t.total_pnl || 0) : Number(t.pnl_30d || 0);
+  return pnlUsdValue(t);
 }
 function rankDisplay(t, fallbackIndex = 0) {
   return `#${Number(t.rank || fallbackIndex + 1)}`;
@@ -1005,7 +1024,7 @@ function renderLivePositions(positions) {
       <div><div class="row-sub">Actual</div><strong>${fmtUsd(p.actual_notional)}</strong></div>
       <div><div class="row-sub">Drift</div><strong class="${positiveClass(p.drift_pct)}">${fmtPct(p.drift_pct)}</strong></div>
       <div><div class="row-sub">PnL</div><strong class="${positiveClass(p.pnl)}">${fmtUsd(p.pnl)}</strong></div>
-      <div><div class="row-sub">PnL %</div><strong class="${positiveClass(p.pnl_pct)}">${fmtPct(p.pnl_pct)}</strong></div>
+      <div><div class="row-sub">PnL</div><strong class="${positiveClass(p.pnl_pct)}">${fmtPct(p.pnl_pct)}</strong></div>
     </div>
   `).join('');
 }
@@ -1119,7 +1138,7 @@ async function openTrader(address) {
   const positions = Array.isArray(trader.positions) ? trader.positions : [];
 
   const liveCards = isLive ? `
-      <div class="detail-card"><span>${trader.source === "fatbot_vault" ? `${String((state.leaderboardFilters || {}).window || "30d").toUpperCase()} PnL` : `PnL Window (${String((state.leaderboardFilters || {}).window || "30d").toUpperCase()})`}</span><strong class="${positiveClass(trader.source === "fatbot_vault" ? (trader.pnl_pct ?? trader.pnl_30d) : trader.total_pnl)}">${trader.source === "fatbot_vault" ? fmtPct(trader.pnl_pct ?? trader.pnl_30d ?? 0) : fmtUsd(trader.total_pnl || 0)}</strong></div>
+      <div class="detail-card"><span>${trader.source === "fatbot_vault" ? `${String((state.leaderboardFilters || {}).window || "30d").toUpperCase()} PnL` : `PnL Window (${String((state.leaderboardFilters || {}).window || "30d").toUpperCase()})`}</span><strong class="${positiveClass(trader.source === "fatbot_vault" ? (trader.pnl_pct ?? trader.pnl_30d) : trader.total_pnl)}">${fmtUsd(pnlUsdValue(trader))}</strong></div>
       <div class="detail-card"><span>Account Value</span><strong>${moneyOrDash(trader.account_value)}</strong></div>
       <div class="detail-card"><span>Long / Short</span><strong>${exposureShareDisplay(trader)}</strong></div>
       <div class="detail-card"><span>Gross Exposure</span><strong>${grossExposureDisplay(trader)}</strong></div>
