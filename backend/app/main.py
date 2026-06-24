@@ -24,6 +24,7 @@ app.add_middleware(
 def startup():
     init_db()
     seed_db()
+    services.start_leaderboard_snapshot_worker()
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
@@ -42,6 +43,18 @@ def summary():
 @app.get("/api/trader-source")
 def trader_source():
     return {"source": services.get_trader_source()}
+
+@app.get("/api/leaderboard-snapshot/{category}")
+def leaderboard_snapshot(category: str):
+    return services.get_leaderboard_snapshot(category)
+
+@app.get("/api/leaderboard-snapshot-status")
+def leaderboard_snapshot_status():
+    return services.get_leaderboard_snapshot_status()
+
+@app.post("/api/leaderboard-snapshot-refresh")
+def leaderboard_snapshot_refresh():
+    return services.precompute_leaderboard_snapshots(force=True)
 
 @app.get("/api/debug/profile-lookup/{address}")
 def debug_profile_lookup(address: str):

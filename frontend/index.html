@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FatBot Copytrading MVP</title>
-  <link rel="stylesheet" href="/static/styles.css?v=97" />
+  <link rel="stylesheet" href="/static/styles.css?v=127" />
 </head>
 <body>
   <header class="topbar">
@@ -84,69 +84,16 @@
           <span class="pill">LIVE DATA</span>
         </div>
 
-        <div class="leaderboard-tabs" role="tablist">
-          <button class="leader-tab active" data-leader-tab="top">Top Traders</button>
-          <button class="leader-tab" data-leader-tab="fatbot">FatBot Vaults</button>
+        <div class="leaderboard-tabs category-tabs" role="tablist">
+          <button class="leader-tab active" data-leader-tab="trades">Top Trades</button>
+          <button class="leader-tab" data-leader-tab="tradfi">Top TradFi</button>
+          <button class="leader-tab" data-leader-tab="crypto">Top Crypto</button>
+          <button class="leader-tab" data-leader-tab="bull">Top Bull</button>
+          <button class="leader-tab" data-leader-tab="bear">Top Bears</button>
+          <button class="leader-tab" data-leader-tab="fatbot_selection">Top FatBot Selection</button>
           <button class="leader-tab" data-leader-tab="favourite">Favourite</button>
-          <button class="leader-tab" data-leader-tab="my" id="myLeaderTab">My Copytrading</button>
         </div>
 
-        <div class="leaderboard-filter-bar" id="leaderboardFilterBar">
-          <label>
-            <span>Timeframe</span>
-            <select id="filterWindow">
-              <option value="1d">1D</option>
-              <option value="7d">7D</option>
-              <option value="30d" selected>30D</option>
-              <option value="90d">90D</option>
-              <option value="all">All</option>
-            </select>
-          </label>
-          <label>
-            <span>Sort by</span>
-            <select id="filterSortBy">
-              <option value="totalPnl" selected>PnL</option>
-              <option value="volume">Volume</option>
-              <option value="winRate">Win Rate</option>
-            </select>
-          </label>
-          <label>
-            <span>Min trades</span>
-            <select id="filterMinTrades">
-              <option value="0" selected>0</option>
-              <option value="10">10</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select>
-          </label>
-          <label>
-            <span>Min active days</span>
-            <select id="filterMinDays">
-              <option value="0" selected>0</option>
-              <option value="3">3</option>
-              <option value="7">7</option>
-              <option value="14">14</option>
-              <option value="30">30</option>
-            </select>
-          </label>
-          <label>
-            <span>Limit</span>
-            <select id="filterLimit">
-              <option value="50" selected>50</option>
-              <option value="100">100</option>
-              <option value="200">200</option>
-              <option value="500">500</option>
-            </select>
-          </label>
-          <label>
-            <span>Market type</span>
-            <select id="filterMarketType">
-              <option value="all" selected>All</option>
-              <option value="crypto">Crypto</option>
-              <option value="tradfi">TradFi</option>
-            </select>
-          </label>
-        </div>
 
         <div id="leaderboardHint" class="leaderboard-hint">Top traders ranked by external PnL leaderboard data.</div>
         <div id="traderList" class="trader-list loading">Loading traders...</div>
@@ -261,6 +208,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=97"></script>
+  <script src="/static/app.js?v=127"></script>
 </body>
 </html>

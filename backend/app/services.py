@@ -1,6 +1,8 @@
 import os
 import random
 import time
+import json
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,6 +17,48 @@ FATBOT_DEFAULT_VAULTS = [
     "0x20c4F93BcAd80C7B83c20dEcA8A7bc91B9e6a3b0",
 ]
 
+FATBOT_SELECTION_ADDRESSES = [
+    "0x023a3d058020fb76cca98f01b3c48c8938a22355",
+    "0xc926ddba8b7617dbc65712f20cf8e1b58b8598d3",
+    "0x31DEA2516BEEE92135B96F464EEEC3CF292A13F2",
+    "0x9DB82C502472D76742FDD69609DFCC6E01327401",
+    "0x95FDE6CF0d305078B7EEaC44182A931c169DD947",
+    "0x0C87080E84Ad8e91F54c4aF0AA921e1F183d601B",
+    "0xb39766100347e1ffa1459492c85e8E3a2b25d3a0",
+    "0xb3162a3C788399D9EC236c67A5af083dD78c8022",
+    "0xA1b6D8EfbcB2fB750a84Dbc05649fA4968034F04",
+    "0x6417da1D2452a4b4A81aa151b7235fFec865082f",
+    "0x47807D3f6Ae34fF6aA1fc8Fe4e7B742197C1E125",
+    "0x4DEc0A851849056E259128464EF28cE78aFa27F6",
+    "0xa5Fd942D4bAdBab4FE84a9E10F565dd40d5f15Ff",
+    "0x7a6d5fc57f6906f337c48fe2763c3a501304f79c",
+    "0x13640f452a56aaa7a5a5e5a6bd24c45374dacbcc",
+    "0x63d417a577b50c96f4f09148d4e4d70950db0522",
+    "0x4ba1d152409f43ad92ba358886fe94bae4f5f656",
+    "0xe8681168f59af16c60c805dab7842eb75f127879",
+    "0x782e432267376f377585fc78092d998f8442ab83",
+    "0x44c9c226cdfae773002b3f86d3966af3cd8f277c",
+    "0x054a01da80ee37d5220af5471b1eedbdcd2cdb2f",
+    "0x288ed4efc8fbd1e42a06fe083ea942d20c90b336",
+    "0x309eE31b6986B4a04Abbfca79A80ADa94508e1dD",
+    "0x4101CE19Ee81F24da894976E585f1E79119dBD93",
+    "0x7f15F9E8f49c07Ab33D4DBd05a92DbD6dfd686ab",
+    "0x223537ac9a856c31f4043e86ced86bb29f06653e",
+    "0x727956612a8700627451204a3ae26268bd1a1525",
+    "0x365e0c115f1ca1adcb42fd21142873493df7f880",
+    "0xc6d7fdfbcb55d6cad6570c5838de394d2aa24015",
+    "0x09f2b610f85a5fea4d35b42cccdc52f1f71d6bc7",
+    "0x1643e9aba4fcfb4e8c1a887090239e34f488cad6",
+    "0xf97ad6704baec104d00b88e0c157e2b7b3a1ddd1",
+    "0x02fbbf39d1e3c142994b383af5ac3f2ad744cda9",
+    "0xba939edf38c0ae0cc689c98b492e0535f43e4550",
+    "0x7ab12f7a0925ef24927343d47199e75a91fc78aa",
+    "0x7786498ffb58bedc6c392a4a40789be5c2da240d",
+    "0x5559da6ec434c5723d0ce9c4da7f29e3f8a3d43b",
+    "0x5f94a51948d2376ad34a6fadfa2544e651b74b96",
+    "0x2d99fe0f36c1aebd28a1a2c0e82e8ca13c2ea351",
+]
+
 _FATBOT_VAULT_CACHE: Dict[str, Any] = {"ts": 0.0, "data": []}
 _FATBOT_VAULT_CACHE_TTL_SECONDS = int(os.getenv("FATBOT_VAULT_CACHE_TTL_SECONDS", "60"))
 
@@ -22,6 +66,16 @@ _TRADER_LEADERBOARD_CACHE: Dict[str, Any] = {"ts": 0.0, "data": []}
 _TRADER_LEADERBOARD_CACHE_TTL_SECONDS = int(os.getenv("TRADER_LEADERBOARD_CACHE_TTL_SECONDS", "60"))
 _PROFILE_CACHE: Dict[str, Any] = {}
 _PROFILE_CACHE_TTL_SECONDS = int(os.getenv("PROFILE_CACHE_TTL_SECONDS", "600"))
+
+_LEADERBOARD_SNAPSHOT_LOCK = threading.Lock()
+_LEADERBOARD_SNAPSHOT_WORKER_STARTED = False
+_LEADERBOARD_SNAPSHOT_REFRESH_SECONDS = int(os.getenv("LEADERBOARD_SNAPSHOT_REFRESH_SECONDS", "300"))
+_LEADERBOARD_SNAPSHOT_POOL_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_POOL_LIMIT", "200"))
+_LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT", "50"))
+_LEADERBOARD_SNAPSHOT_ENABLED = os.getenv("LEADERBOARD_SNAPSHOT_ENABLED", "true").lower() not in ("0", "false", "no", "off")
+_LEADERBOARD_SNAPSHOT_CATEGORIES = ["trades", "tradfi", "crypto", "bull", "bear", "fatbot_selection"]
+
+
 
 
 
@@ -50,6 +104,328 @@ def _profile_cache_get(key: str) -> Optional[Dict[str, Any]]:
 def _profile_cache_set(key: str, data: Dict[str, Any]) -> Dict[str, Any]:
     _PROFILE_CACHE[str(key).lower()] = {"ts": time.time(), "data": data}
     return data
+
+
+
+
+def _leaderboard_snapshot_now() -> float:
+    return time.time()
+
+
+def _leaderboard_snapshot_rows_from_db(category: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    category = str(category or "trades").lower()
+    with get_db() as db:
+        meta = row_to_dict(db.execute(
+            "SELECT category, updated_at, status, error FROM leaderboard_snapshots WHERE category = ?",
+            (category,),
+        ).fetchone())
+        rows = db.execute(
+            "SELECT payload FROM leaderboard_snapshot_rows WHERE category = ? ORDER BY rank ASC",
+            (category,),
+        ).fetchall()
+
+    parsed: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            parsed.append(json.loads(row["payload"]))
+        except Exception:
+            continue
+    return meta, parsed
+
+
+def _leaderboard_snapshot_write(category: str, rows: List[Dict[str, Any]], status: str = "ready", error: Optional[str] = None) -> None:
+    category = str(category or "trades").lower()
+    now = _leaderboard_snapshot_now()
+    clean_rows = []
+    for idx, row in enumerate(rows or [], start=1):
+        item = dict(row or {})
+        item["rank"] = idx
+        item["snapshot_category"] = category
+        item["snapshot_updated_at"] = now
+        clean_rows.append(item)
+
+    with get_db() as db:
+        db.execute(
+            """
+            INSERT INTO leaderboard_snapshots(category, updated_at, status, error)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(category) DO UPDATE SET
+                updated_at = excluded.updated_at,
+                status = excluded.status,
+                error = excluded.error
+            """,
+            (category, now, status, error),
+        )
+        db.execute("DELETE FROM leaderboard_snapshot_rows WHERE category = ?", (category,))
+        for idx, row in enumerate(clean_rows, start=1):
+            db.execute(
+                "INSERT INTO leaderboard_snapshot_rows(category, rank, payload) VALUES (?, ?, ?)",
+                (category, idx, json.dumps(row, separators=(",", ":"), ensure_ascii=False)),
+            )
+
+
+def _leaderboard_snapshot_mark_error(category: str, error: str) -> None:
+    # Preserve last good rows; only update status/error metadata.
+    with get_db() as db:
+        db.execute(
+            """
+            INSERT INTO leaderboard_snapshots(category, updated_at, status, error)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(category) DO UPDATE SET
+                updated_at = excluded.updated_at,
+                status = excluded.status,
+                error = excluded.error
+            """,
+            (str(category or "trades").lower(), _leaderboard_snapshot_now(), "error", str(error or "unknown error")),
+        )
+
+
+def _leaderboard_sort_pnl(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def value(row: Dict[str, Any]) -> float:
+        try:
+            return float(row.get("total_pnl") or row.get("pnl_usd") or row.get("pnl") or 0)
+        except Exception:
+            return 0.0
+    return sorted(rows or [], key=value, reverse=True)
+
+
+
+def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
+    """
+    Manual FatBot Selection.
+
+    Only wallets with current open positions are shown.
+    This runs in the background snapshot worker, not per user click.
+    """
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for idx, address in enumerate(FATBOT_SELECTION_ADDRESSES, start=1):
+        addr = str(address or "").strip()
+        if not addr:
+            continue
+        key = addr.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            "address": addr,
+            "label": f"FatBot Selection #{idx}",
+            "source": "hydromancer",
+            "rank": idx,
+            "is_fatbot_selection": True,
+            "total_pnl": 0,
+            "pnl_usd": 0,
+            "volume": 0,
+            "volume_traded": 0,
+            "win_rate": 0,
+            "trades": 0,
+            "total_trades": 0,
+            "days_active": 0,
+            "account_age_days": 0,
+            "positions": [],
+            "open_positions": 0,
+            "leaderboard_window": "30d",
+            "leaderboard_sort_by": "totalPnl",
+            "requested_market_type": "fatbot_selection",
+        })
+
+    if not rows:
+        return []
+
+    try:
+        workers = int(os.getenv("FATBOT_SELECTION_WORKERS", "12"))
+    except Exception:
+        workers = 12
+    workers = max(1, min(workers, len(rows)))
+
+    def enrich_one(item: Dict[str, Any]) -> Dict[str, Any]:
+        address = str(item.get("address") or "")
+        try:
+            item = _enrich_with_hyperliquid_live_stats(item, address, window="30d")
+            if item.get("positions"):
+                item = _attach_market_type_metrics(item)
+        except Exception as exc:
+            item["fatbot_selection_status"] = f"error: {exc}"
+        return item
+
+    enriched: List[Optional[Dict[str, Any]]] = [None] * len(rows)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(enrich_one, dict(row)): idx for idx, row in enumerate(rows)}
+        for future in as_completed(future_map):
+            idx = future_map[future]
+            try:
+                enriched[idx] = future.result()
+            except Exception:
+                enriched[idx] = rows[idx]
+
+    visible: List[Dict[str, Any]] = []
+    for idx, enriched_item in enumerate(enriched):
+        row = enriched_item if enriched_item is not None else rows[idx]
+        if int(row.get("open_positions") or 0) > 0 or bool(row.get("positions")):
+            visible.append(row)
+
+    visible = _leaderboard_sort_pnl(visible)
+    visible = _enrich_top_traders_pnl_sparkline(visible, {"window": "30d"})
+    for idx, row in enumerate(visible, start=1):
+        row["rank"] = idx
+        row["snapshot_category"] = "fatbot_selection"
+    return visible
+
+
+
+def _leaderboard_snapshot_build_from_pool(pool: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    visible = max(1, int(_LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT or 50))
+    rows = [dict(r) for r in (pool or []) if r.get("address")]
+
+    trades = _leaderboard_sort_pnl(rows)[:visible]
+    tradfi = _leaderboard_sort_pnl([
+        r for r in rows
+        if float(r.get("tradfi_position_count_pct") or 0) >= float(_market_type_config().get("tradfi_position_count_threshold") or 70)
+    ])[:visible]
+    crypto = _leaderboard_sort_pnl([
+        r for r in rows
+        if float(r.get("crypto_exposure_pct") or 0) >= float(_market_type_config().get("crypto_threshold") or 70)
+    ])[:visible]
+    bull = _leaderboard_sort_pnl([
+        r for r in rows
+        if float(r.get("long_exposure_share_pct") or r.get("long_exposure_pct") or 0) > 80
+    ])[:visible]
+    bear = _leaderboard_sort_pnl([
+        r for r in rows
+        if float(r.get("short_exposure_share_pct") or r.get("short_exposure_pct") or 0) > 80
+    ])[:visible]
+
+    return {
+        "trades": trades,
+        "tradfi": tradfi,
+        "crypto": crypto,
+        "bull": bull,
+        "bear": bear,
+    }
+
+
+def precompute_leaderboard_snapshots(force: bool = False) -> Dict[str, Any]:
+    if not _LEADERBOARD_SNAPSHOT_ENABLED:
+        return {"ok": False, "enabled": False, "reason": "disabled"}
+
+    if not _LEADERBOARD_SNAPSHOT_LOCK.acquire(blocking=False):
+        return {"ok": False, "running": True}
+
+    started = _leaderboard_snapshot_now()
+    try:
+        # One enriched all-market pool, then split into fixed categories.
+        # This avoids running separate slow Hyperliquid/XYZ scans per user click.
+        pool_limit = max(_LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT, _LEADERBOARD_SNAPSHOT_POOL_LIMIT)
+        pool = list_traders(
+            force_refresh=force,
+            window="30d",
+            sort_by="totalPnl",
+            limit=pool_limit,
+            min_trades=0,
+            min_days_active=0,
+            market_type="all",
+        )
+
+        category_rows = _leaderboard_snapshot_build_from_pool(pool)
+        category_rows["fatbot_selection"] = _leaderboard_snapshot_build_fatbot_selection()
+        for category, rows in category_rows.items():
+            _leaderboard_snapshot_write(category, rows, status="ready", error=None)
+
+        return {
+            "ok": True,
+            "enabled": True,
+            "duration_seconds": round(_leaderboard_snapshot_now() - started, 3),
+            "categories": {k: len(v) for k, v in category_rows.items()},
+        }
+    except Exception as exc:
+        err = str(exc)
+        for category in _LEADERBOARD_SNAPSHOT_CATEGORIES:
+            _leaderboard_snapshot_mark_error(category, err)
+        return {"ok": False, "enabled": True, "error": err}
+    finally:
+        _LEADERBOARD_SNAPSHOT_LOCK.release()
+
+
+def get_leaderboard_snapshot(category: str = "trades") -> Dict[str, Any]:
+    category = str(category or "trades").lower()
+    if category == "top":
+        category = "trades"
+    if category not in set(_LEADERBOARD_SNAPSHOT_CATEGORIES):
+        category = "trades"
+
+    meta, rows = _leaderboard_snapshot_rows_from_db(category)
+    running = _LEADERBOARD_SNAPSHOT_LOCK.locked()
+
+    if not meta:
+        # Kick off a background build, but do not block the user request.
+        start_leaderboard_snapshot_worker(run_once=True)
+        return {
+            "category": category,
+            "status": "preparing",
+            "updated_at": None,
+            "age_seconds": None,
+            "running": True,
+            "rows": [],
+            "error": None,
+        }
+
+    age = max(0.0, _leaderboard_snapshot_now() - float(meta.get("updated_at") or 0))
+    return {
+        "category": category,
+        "status": meta.get("status") or ("ready" if rows else "preparing"),
+        "updated_at": meta.get("updated_at"),
+        "age_seconds": round(age, 1),
+        "running": running,
+        "rows": rows,
+        "error": meta.get("error"),
+    }
+
+
+def get_leaderboard_snapshot_status() -> Dict[str, Any]:
+    out = {"enabled": _LEADERBOARD_SNAPSHOT_ENABLED, "running": _LEADERBOARD_SNAPSHOT_LOCK.locked(), "categories": {}}
+    for category in _LEADERBOARD_SNAPSHOT_CATEGORIES:
+        meta, rows = _leaderboard_snapshot_rows_from_db(category)
+        if not meta:
+            out["categories"][category] = {"status": "missing", "rows": 0, "age_seconds": None, "updated_at": None}
+        else:
+            age = max(0.0, _leaderboard_snapshot_now() - float(meta.get("updated_at") or 0))
+            out["categories"][category] = {
+                "status": meta.get("status"),
+                "rows": len(rows),
+                "age_seconds": round(age, 1),
+                "updated_at": meta.get("updated_at"),
+                "error": meta.get("error"),
+            }
+    return out
+
+
+def start_leaderboard_snapshot_worker(run_once: bool = False) -> Dict[str, Any]:
+    global _LEADERBOARD_SNAPSHOT_WORKER_STARTED
+    if not _LEADERBOARD_SNAPSHOT_ENABLED:
+        return {"started": False, "enabled": False}
+
+    def worker_loop() -> None:
+        while True:
+            try:
+                precompute_leaderboard_snapshots(force=False)
+            except Exception as exc:
+                print(f"[leaderboard-snapshot] refresh failed: {exc}")
+            if run_once:
+                break
+            time.sleep(max(30, int(_LEADERBOARD_SNAPSHOT_REFRESH_SECONDS or 300)))
+
+    if run_once:
+        thread = threading.Thread(target=worker_loop, daemon=True, name="leaderboard-snapshot-once")
+        thread.start()
+        return {"started": True, "once": True}
+
+    if _LEADERBOARD_SNAPSHOT_WORKER_STARTED:
+        return {"started": False, "already_started": True, "enabled": True}
+
+    _LEADERBOARD_SNAPSHOT_WORKER_STARTED = True
+    thread = threading.Thread(target=worker_loop, daemon=True, name="leaderboard-snapshot-worker")
+    thread.start()
+    return {"started": True, "enabled": True, "refresh_seconds": _LEADERBOARD_SNAPSHOT_REFRESH_SECONDS}
 
 
 
@@ -120,11 +496,11 @@ def _leaderboard_cache_key(prefix: str, filters: Dict[str, Any]) -> str:
 def _market_type_config() -> Dict[str, Any]:
     # Separate thresholds:
     # - Crypto remains stricter by default.
-    # - TradFi/XYZ is intentionally looser because these markets are more niche
-    #   and traders may mix collateral/hedges with crypto perps.
+    # - TradFi/XYZ now uses the same 70% dominance idea as Crypto,
+    #   but based on open-position count share.
     crypto_threshold = float(os.getenv("MARKET_TYPE_CRYPTO_THRESHOLD", os.getenv("MARKET_TYPE_EXPOSURE_THRESHOLD", "70")))
-    tradfi_threshold = float(os.getenv("MARKET_TYPE_TRADFI_THRESHOLD", "40"))
-    tradfi_position_count_threshold = float(os.getenv("MARKET_TYPE_TRADFI_POSITION_COUNT_THRESHOLD", "40"))
+    tradfi_threshold = float(os.getenv("MARKET_TYPE_TRADFI_THRESHOLD", "70"))
+    tradfi_position_count_threshold = float(os.getenv("MARKET_TYPE_TRADFI_POSITION_COUNT_THRESHOLD", "70"))
 
     registry = get_registry(force_refresh=False)
     return {
@@ -242,7 +618,7 @@ def _apply_local_leaderboard_filters(rows: List[Dict[str, Any]], filters: Dict[s
         if market_type != "all":
             row_market = str(row.get("market_type") or "").lower()
             # TradFi filter is based on count of open positions, not exposure notional.
-            # Example: 10 open positions, 1 TradFi = 10%; 4 TradFi = 40%.
+            # Example: 10 open positions, 7 TradFi = 70%.
             if market_type == "tradfi_any":
                 # Discovery mode: show any wallet with at least one current TradFi/XYZ/SPX position.
                 if not (bool(row.get("has_tradfi_position")) or int(row.get("tradfi_position_count") or 0) > 0):
@@ -497,6 +873,336 @@ def get_summary() -> Dict[str, Any]:
 
 
 
+def _portfolio_bucket_from_payload(payload: Any, window: str = "7d") -> Optional[Dict[str, Any]]:
+    target = str(window or "7d").lower()
+    period_map = {
+        "1d": ("day", "1d"),
+        "7d": ("week", "7d"),
+        "30d": ("month", "30d"),
+        "all": ("allTime", "all", "all_time"),
+    }
+    aliases = period_map.get(target, ("week", "7d"))
+
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                if str(item[0]) in aliases and isinstance(item[1], dict):
+                    return item[1]
+            elif isinstance(item, dict):
+                period = str(item.get("period") or item.get("timeframe") or item.get("window") or "")
+                if period in aliases:
+                    return item
+
+    if isinstance(payload, dict):
+        for key in aliases:
+            value = payload.get(key)
+            if isinstance(value, dict):
+                return value
+
+        nested = payload.get("data") or payload.get("result")
+        if isinstance(nested, dict):
+            for key in aliases:
+                value = nested.get(key)
+                if isinstance(value, dict):
+                    return value
+
+    return None
+
+
+def _float_from_history_point(point: Any) -> Optional[float]:
+    try:
+        if isinstance(point, (list, tuple)) and len(point) >= 2:
+            return float(str(point[1]).replace("$", "").replace(",", "").strip())
+        if isinstance(point, dict):
+            value = (
+                point.get("pnl")
+                or point.get("value")
+                or point.get("y")
+                or point.get("totalPnl")
+                or point.get("cumPnl")
+                or point.get("cumulativePnl")
+            )
+            if value is None:
+                return None
+            return float(str(value).replace("$", "").replace(",", "").strip())
+    except Exception:
+        return None
+    return None
+
+
+def _downsample(values: List[float], max_points: int = 20) -> List[float]:
+    if len(values) <= max_points:
+        return values
+    if max_points <= 2:
+        return [values[0], values[-1]]
+    out: List[float] = []
+    last_index = len(values) - 1
+    for i in range(max_points):
+        idx = round(i * last_index / (max_points - 1))
+        out.append(values[idx])
+    return out
+
+
+def _pnl_sparkline_from_portfolio_payload(payload: Any, window: str = "7d") -> List[float]:
+    bucket = _portfolio_bucket_from_payload(payload, window)
+    if not isinstance(bucket, dict):
+        return []
+
+    history = bucket.get("pnlHistory") or bucket.get("pnl_history") or bucket.get("pnl_history_usd")
+    if not isinstance(history, list) or len(history) < 2:
+        return []
+
+    values: List[float] = []
+    for point in history:
+        value = _float_from_history_point(point)
+        if value is None:
+            continue
+        values.append(value)
+
+    if len(values) < 2:
+        return []
+
+    return _downsample(values, int(os.getenv("TOP_TRADERS_SPARKLINE_MAX_POINTS", "20")))
+
+
+def _history_point_ts(point: Any, fallback_index: int = 0) -> int:
+    try:
+        if isinstance(point, (list, tuple)) and len(point) >= 1:
+            return int(float(point[0]))
+        if isinstance(point, dict):
+            value = (
+                point.get("time")
+                or point.get("timestamp")
+                or point.get("t")
+                or point.get("ts")
+                or point.get("x")
+            )
+            if value is not None:
+                return int(float(value))
+    except Exception:
+        pass
+    return int(fallback_index)
+
+
+def _history_point_value(point: Any, keys: Tuple[str, ...]) -> Optional[float]:
+    try:
+        if isinstance(point, (list, tuple)) and len(point) >= 2:
+            return float(str(point[1]).replace("$", "").replace(",", "").strip())
+        if isinstance(point, dict):
+            value = None
+            for key in keys:
+                if point.get(key) is not None:
+                    value = point.get(key)
+                    break
+            if value is None:
+                return None
+            return float(str(value).replace("$", "").replace(",", "").strip())
+    except Exception:
+        return None
+    return None
+
+
+def _parse_history_points(history: Any, keys: Tuple[str, ...]) -> List[Dict[str, Any]]:
+    if not isinstance(history, list):
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for idx, point in enumerate(history):
+        value = _history_point_value(point, keys)
+        if value is None:
+            continue
+        out.append({
+            "ts": _history_point_ts(point, idx),
+            "value": value,
+            "idx": idx,
+        })
+
+    out.sort(key=lambda x: (int(x.get("ts") or 0), int(x.get("idx") or 0)))
+    return out
+
+
+def _nearest_value_by_ts(points: List[Dict[str, Any]], ts: int, fallback_index: int = 0) -> Optional[float]:
+    if not points:
+        return None
+
+    # If timestamps look real, use nearest timestamp.
+    if ts and any(int(p.get("ts") or 0) > 100000 for p in points):
+        nearest = min(points, key=lambda p: abs(int(p.get("ts") or 0) - int(ts)))
+        return float(nearest.get("value"))
+
+    if 0 <= fallback_index < len(points):
+        return float(points[fallback_index].get("value"))
+
+    nearest_idx = min(range(len(points)), key=lambda i: abs(i - fallback_index))
+    return float(points[nearest_idx].get("value"))
+
+
+def _downsample_dict_points(points: List[Dict[str, Any]], max_points: int = 80) -> List[Dict[str, Any]]:
+    if len(points) <= max_points:
+        return points
+    if max_points <= 2:
+        return [points[0], points[-1]]
+    out: List[Dict[str, Any]] = []
+    last_index = len(points) - 1
+    for i in range(max_points):
+        idx = round(i * last_index / (max_points - 1))
+        out.append(points[idx])
+    return out
+
+
+def _portfolio_chart_points_from_payload(payload: Any, window: str = "7d") -> List[Dict[str, Any]]:
+    bucket = _portfolio_bucket_from_payload(payload, window)
+    if not isinstance(bucket, dict):
+        return []
+
+    pnl_history = bucket.get("pnlHistory") or bucket.get("pnl_history") or bucket.get("pnl_history_usd")
+    av_history = bucket.get("accountValueHistory") or bucket.get("account_value_history") or bucket.get("account_value_usd_history")
+
+    pnl_points = _parse_history_points(
+        pnl_history,
+        ("pnl", "value", "y", "totalPnl", "cumPnl", "cumulativePnl"),
+    )
+    av_points = _parse_history_points(
+        av_history,
+        ("accountValue", "account_value", "value", "y", "equity", "accountEquity"),
+    )
+
+    if len(pnl_points) < 2 and len(av_points) < 2:
+        return []
+
+    # PnL is the primary x-axis when available; otherwise use account value.
+    base_points = pnl_points if len(pnl_points) >= 2 else av_points
+    chart: List[Dict[str, Any]] = []
+
+    for idx, point in enumerate(base_points):
+        ts = int(point.get("ts") or idx)
+        pnl_value = float(point.get("value")) if len(pnl_points) >= 2 else _nearest_value_by_ts(pnl_points, ts, idx)
+        av_value = _nearest_value_by_ts(av_points, ts, idx)
+
+        row: Dict[str, Any] = {
+            "ts": ts,
+            "pnl_usd": pnl_value,
+        }
+
+        if av_value is not None and av_value > 0:
+            row["account_value"] = av_value
+            if pnl_value is not None:
+                row["pnl_equity_pct"] = (float(pnl_value) / float(av_value)) * 100.0
+
+        chart.append(row)
+
+    chart = [p for p in chart if p.get("pnl_usd") is not None or p.get("account_value") is not None]
+    if len(chart) < 2:
+        return []
+
+    return _downsample_dict_points(chart, int(os.getenv("PROFILE_CHART_MAX_POINTS", "80")))
+
+
+def _attach_portfolio_chart_data(item: Dict[str, Any], address: str, filters: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Attach real portfolio chart points for the profile modal.
+
+    Chart series:
+    - pnl_usd: Hyperliquid portfolio pnlHistory
+    - account_value: Hyperliquid portfolio accountValueHistory
+    - pnl_equity_pct: pointwise pnl_usd / account_value * 100
+
+    pnl_equity_pct is intentionally labelled as PnL/equity %, not ROI.
+    It is not cashflow-adjusted.
+    """
+    enabled = os.getenv("PROFILE_PORTFOLIO_CHARTS", "true").lower() in ("1", "true", "yes", "on")
+    if not enabled or not address:
+        return item
+
+    if item.get("portfolio_chart_points"):
+        return item
+
+    window = "1d" if str(filters.get("window") or "").lower() == "1d" else "7d"
+
+    try:
+        hl_client = HyperliquidClient()
+        payload = hl_client.portfolio(address)
+        points = _portfolio_chart_points_from_payload(payload, window)
+        if points:
+            item["portfolio_chart_points"] = points
+            item["portfolio_chart_window"] = window
+            item["portfolio_chart_source"] = "hyperliquid_portfolio_pnlHistory_accountValueHistory"
+
+            # Reuse the same real PnL points for mini sparkline if the leaderboard did not already have it.
+            if not item.get("pnl_sparkline"):
+                item["pnl_sparkline"] = [float(p.get("pnl_usd")) for p in points if p.get("pnl_usd") is not None]
+                item["pnl_sparkline_window"] = window
+                item["pnl_sparkline_source"] = "hyperliquid_portfolio_pnlHistory"
+    except Exception as exc:
+        item["portfolio_chart_status"] = f"error: {exc}"
+
+    return item
+
+
+
+
+def _enrich_top_traders_pnl_sparkline(rows: List[Dict[str, Any]], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Add a small real USD PnL trend from Hyperliquid portfolio.pnlHistory.
+
+    No fake points:
+    - If portfolio/pnlHistory is missing, the row simply has no sparkline.
+    - We do not convert this to %, because deposits/withdrawals can distort %.
+    """
+    enabled = os.getenv("TOP_TRADERS_SPARKLINE_ENRICH", "true").lower() in ("1", "true", "yes", "on")
+    if not enabled or not rows:
+        return rows
+
+    window = "1d" if str(filters.get("window") or "").lower() == "1d" else "7d"
+
+    try:
+        enrich_limit = int(os.getenv("TOP_TRADERS_SPARKLINE_ENRICH_LIMIT", "50"))
+    except Exception:
+        enrich_limit = 50
+    enrich_limit = max(0, min(enrich_limit, len(rows)))
+
+    try:
+        workers = int(os.getenv("TOP_TRADERS_SPARKLINE_WORKERS", "8"))
+    except Exception:
+        workers = 8
+    workers = max(1, min(workers, max(1, enrich_limit)))
+
+    def enrich_one(item: Dict[str, Any]) -> Dict[str, Any]:
+        address = str(item.get("address") or "")
+        if not address:
+            return item
+
+        try:
+            hl_client = HyperliquidClient()
+            payload = hl_client.portfolio(address)
+            sparkline = _pnl_sparkline_from_portfolio_payload(payload, window)
+            if sparkline:
+                item["pnl_sparkline"] = sparkline
+                item["pnl_sparkline_window"] = window
+                item["pnl_sparkline_source"] = "hyperliquid_portfolio_pnlHistory"
+        except Exception as exc:
+            item["pnl_sparkline_status"] = f"error: {exc}"
+
+        return item
+
+    head = rows[:enrich_limit]
+    tail = rows[enrich_limit:]
+    enriched: List[Optional[Dict[str, Any]]] = [None] * len(head)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(enrich_one, dict(row)): idx for idx, row in enumerate(head)}
+        for future in as_completed(future_map):
+            idx = future_map[future]
+            try:
+                enriched[idx] = future.result()
+            except Exception:
+                enriched[idx] = head[idx]
+
+    return [row if row is not None else head[i] for i, row in enumerate(enriched)] + tail
+
+
+
+
 def _enrich_top_traders_account_value(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Lightweight account value enrichment for Top Traders table.
@@ -572,10 +1278,10 @@ def _enrich_top_traders_with_current_exposure(rows: List[Dict[str, Any]]) -> Lis
 
     has_tradfi_filter = any(str(row.get("requested_market_type") or row.get("active_market_filter") or "").lower() in ("tradfi", "tradfi_any") for row in rows)
     try:
-        default_limit = "2000" if has_tradfi_filter else "800"
+        default_limit = "250" if has_tradfi_filter else "120"
         enrich_limit = int(os.getenv("TOP_TRADERS_EXPOSURE_ENRICH_LIMIT", default_limit))
     except Exception:
-        enrich_limit = 2000 if has_tradfi_filter else 800
+        enrich_limit = 250 if has_tradfi_filter else 120
     enrich_limit = max(0, min(enrich_limit, len(rows)))
 
     try:
@@ -695,7 +1401,7 @@ def _hydromancer_market_type_candidates(client: HydromancerClient, filters: Dict
     try:
         max_candidates = int(os.getenv("MARKET_TYPE_MAX_CANDIDATES", "2000" if market_type in ("tradfi", "tradfi_any") else "800"))
     except Exception:
-        max_candidates = 2000 if market_type in ("tradfi", "tradfi_any") else 800
+        max_candidates = 300 if market_type in ("tradfi", "tradfi_any") else 180
     max_candidates = max(int(filters.get("limit") or 50), min(max_candidates, 2500))
 
     return out[:max_candidates]
@@ -749,10 +1455,13 @@ def list_traders(
             if filters.get("market_type") != "all":
                 normalized = _enrich_top_traders_with_current_exposure(normalized)
             else:
-                # For the main leaderboard table only, attach account value to a
-                # capped number of visible rows so the UI can show Account Value
-                # instead of historical volume without changing ranking/filter logic.
+                # For the main leaderboard table, attach Account Value first.
                 normalized = _enrich_top_traders_account_value(normalized)
+
+                # v117: Gross Exp. column needs live open-position notionals.
+                # This uses the same current exposure path as profile/market filters
+                # and is capped by TOP_TRADERS_EXPOSURE_ENRICH_LIMIT if needed.
+                normalized = _enrich_top_traders_with_current_exposure(normalized)
 
             normalized = _apply_local_leaderboard_filters(normalized, filters)
 
@@ -763,6 +1472,8 @@ def list_traders(
 
             for idx, row in enumerate(normalized, start=1):
                 row["rank"] = idx
+
+            normalized = _enrich_top_traders_pnl_sparkline(normalized, filters)
 
             _TRADER_LEADERBOARD_CACHE[cache_key] = {"ts": now, "data": normalized}
             return normalized
@@ -1230,6 +1941,7 @@ def get_trader(
     cached_row_profile = _find_trader_in_leaderboard_caches(address)
     if cached_row_profile is not None:
         cached_row_profile = _merge_cached_row_fields(cached_row_profile, cached_metadata_row)
+        cached_row_profile = _attach_portfolio_chart_data(cached_row_profile, address, filters)
         return _profile_cache_set(profile_cache_key, cached_row_profile)
 
     # FatBot vault profiles are platform vaults, even when the address also appears in external leaderboards.
@@ -1243,6 +1955,7 @@ def get_trader(
     ):
         if str(vault.get("address", "")).lower() == address.lower() or str(vault.get("vault_id", "")) == address:
             vault["history"] = []
+            vault = _attach_portfolio_chart_data(vault, str(vault.get("address") or address), filters)
             return _profile_cache_set(profile_cache_key, vault)
 
     with get_db() as db:
@@ -1291,6 +2004,7 @@ def get_trader(
                     t["profile_mode"] = "fast_cached_leaderboard_row_with_positions"
                     t["open_positions"] = len(existing_positions)
                     t = _attach_current_exposure_metrics(t)
+                    t = _attach_portfolio_chart_data(t, address, filters)
                     return _profile_cache_set(profile_cache_key, t)
 
                 try:
@@ -1353,6 +2067,7 @@ def get_trader(
                         t = _attach_current_exposure_metrics(t)
 
                 t = _merge_cached_row_fields(t, cached_metadata_row)
+                t = _attach_portfolio_chart_data(t, address, filters)
                 return _profile_cache_set(profile_cache_key, t)
 
     for vault in list_fatbot_vaults(
@@ -1370,6 +2085,7 @@ def get_trader(
     direct = _direct_live_trader_profile(address, filters)
     if direct:
         direct = _merge_cached_row_fields(direct, cached_metadata_row)
+        direct = _attach_portfolio_chart_data(direct, address, filters)
         return _profile_cache_set(profile_cache_key, direct)
 
     return None

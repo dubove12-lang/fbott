@@ -28,6 +28,22 @@ def init_db():
     with get_db() as db:
         db.executescript(
             """
+
+            CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
+                category TEXT PRIMARY KEY,
+                updated_at REAL NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS leaderboard_snapshot_rows (
+                category TEXT NOT NULL,
+                rank INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (category, rank),
+                FOREIGN KEY (category) REFERENCES leaderboard_snapshots(category) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS smart_traders (
                 address TEXT PRIMARY KEY,
                 label TEXT NOT NULL,

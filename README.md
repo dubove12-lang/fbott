@@ -1283,3 +1283,409 @@ Implementation:
 Changed:
 - `frontend/styles.css`
 - `frontend/index.html`
+
+
+## v108 Two-column UI + real 7D PnL sparkline
+Baseline: v97.
+
+Major UI changes:
+- Removed the active right-side Hot wallets / Live feed column.
+- Current middle Copytrading modules now become the right column.
+- PnL Leaderboard is widened to roughly 2/3 of the screen.
+- Added mini PnL sparkline column to Top Traders rows.
+
+Sparkline data:
+- Source: Hyperliquid `portfolio` endpoint, bucket:
+  - `day` for 1D leaderboard window
+  - `week` for all other windows
+- Uses `pnlHistory` directly in USD.
+- No fake chart:
+  - if `pnlHistory` is missing or has fewer than 2 points, the row shows `—`.
+- Enrichment is capped for performance:
+  - `TOP_TRADERS_SPARKLINE_ENRICH_LIMIT=14`
+  - `TOP_TRADERS_SPARKLINE_WORKERS=8`
+
+Changed:
+- `backend/app/services.py`
+- `frontend/app.js`
+- `frontend/styles.css`
+- `frontend/index.html`
+
+
+## v109 Profile portfolio charts
+Adds large profile charts while keeping the leaderboard mini chart conservative.
+
+Leaderboard mini chart:
+- Still uses Hyperliquid `portfolio.pnlHistory`.
+- Displayed as USD PnL trend.
+- No fake points; missing history shows `—`.
+
+Trader profile modal:
+- Adds large charts from Hyperliquid `portfolio`:
+  - PnL USD
+  - Account value
+  - PnL / equity %
+- `PnL / equity % = pnl_usd / account_value * 100` per chart point.
+- This is explicitly not cashflow-adjusted ROI.
+- If a series has fewer than 2 real points, it is not shown.
+
+Backend:
+- Adds `portfolio_chart_points` to trader profile responses.
+- Uses:
+  - `day` bucket when leaderboard window is 1D
+  - `week` bucket otherwise
+- Env:
+  - `PROFILE_PORTFOLIO_CHARTS=true`
+  - `PROFILE_CHART_MAX_POINTS=80`
+
+
+## v110 Async openTrader fix
+Fixes frontend JavaScript syntax error from v109:
+
+- Error: `Uncaught SyntaxError: await is only valid in async functions`
+- Cause: `openTrader(address)` used `await` but was declared as a normal function.
+- Fix: changed it to `async function openTrader(address)`.
+
+Changed:
+- `frontend/app.js`
+- `frontend/index.html` cache bump
+
+
+## v111 Single top profile chart
+Wallet/trader profile modal update:
+- Portfolio chart section moved to the very top of the modal.
+- Replaced three separate chart cards with one large active chart.
+- Added toggle buttons:
+  - PnL USD
+  - Account Value
+  - PnL / Equity %
+- Chart switches instantly on the frontend using already loaded `portfolio_chart_points`.
+
+No backend data model change from v109/v110.
+
+
+## v112 Async final fix
+Fixes the recurring frontend syntax error:
+
+- `Uncaught SyntaxError: await is only valid in async functions`
+- Ensures every `openTrader(address)` declaration is `async function openTrader(address)`.
+
+Also cache-bumped:
+- `styles.css?v=112`
+- `app.js?v=112`
+
+JS syntax check:
+```text
+exit=0
+STDOUT=
+STDERR=
+```
+
+
+## v113 Wallet click fix
+Fixes wallet/trader click not opening after v111/v112.
+
+Cause:
+- Loading-state modal template called `profileChartsHtml(trader)` before `trader` existed.
+- This caused a frontend ReferenceError immediately after clicking a wallet.
+
+Fix:
+- Removed the chart call from the loading skeleton.
+- Kept the chart at the top of the final profile after API data loads.
+
+JS syntax check:
+```text
+exit=0
+STDOUT=
+STDERR=
+```
+
+
+## v114 Profile layout cleanup
+Profile modal update:
+- Trader profile header with logo and Copy button is first at the top.
+- Portfolio chart is below the profile header.
+- Chart toggle buttons moved to the bottom-right of the chart card.
+- Removed Account Age and Total Funding cards to save one detail row.
+
+Changed:
+- `frontend/app.js`
+- `frontend/styles.css`
+- `frontend/index.html`
+
+
+## v115 Profile 3x3 stats
+Profile detail stats update:
+- Account Age is restored.
+- Total Funding remains removed.
+- Live profile stats are now 9 cards in a 3 × 3 grid.
+- Chart/header layout unchanged from v114.
+
+Changed:
+- `frontend/app.js`
+- `frontend/styles.css`
+- `frontend/index.html`
+
+
+## v116 Leaderboard columns and height
+Leaderboard update:
+- Removed the Rank column completely.
+- Added Volume column.
+- Added Gross Exp. column.
+- Extended the left PnL Leaderboard module downward so more wallets fit and it aligns better with the copytrading module on the right.
+
+Changed:
+- `frontend/app.js`
+- `frontend/styles.css`
+- `frontend/index.html`
+
+
+## v117 Leaderboard fix
+Fixes based on v116:
+- Leaderboard height reduced by about two wallet rows.
+- Gross Exp. column is now populated from live Hyperliquid current exposure enrichment, not just displayed as an empty UI column.
+- Mini PnL sparkline enrichment default limit increased from 14 to 50, so rows lower in the scroll can still show real charts.
+
+Notes:
+- Gross exposure is only shown when live current positions/account value can be fetched.
+- Missing Gross Exp. still displays `—` instead of fake data.
+- Missing sparkline still displays `—` instead of fake data.
+
+Changed:
+- `backend/app/services.py`
+- `frontend/styles.css`
+- `frontend/index.html`
+
+
+## v118 Profile chart restore
+Fixes profile charts disappearing after v117.
+
+Cause:
+- v117 started enriching all-market leaderboard rows with live positions/exposure.
+- `get_trader()` then found the clicked wallet in the leaderboard cache and returned that cached row early.
+- That early return happened before `_attach_portfolio_chart_data()`, so the modal had no `portfolio_chart_points`.
+
+Fix:
+- Cached leaderboard profile path now also calls `_attach_portfolio_chart_data()` before returning.
+
+Changed:
+- `backend/app/services.py`
+- `frontend/index.html` cache bump
+- `frontend/app.js` cache marker only
+
+
+## v119 Leaderboard column order
+Trader row columns reordered to:
+- PnL
+- Value
+- Volume
+- Exposure
+- Win Rate
+- 7D PnL graph
+
+Changed:
+- `frontend/app.js`
+- `frontend/styles.css`
+- `frontend/index.html`
+
+
+## v120 Leaderboard categories
+Replaces old leaderboard tabs with requested categories:
+- Top TradFi
+- Top Crypto
+- Top Bull
+- Top Bears
+- Top FatBot Selection
+- Favourite
+
+Logic:
+- Top TradFi: backend marketType=`tradfi`, sorted by PnL.
+- Top Crypto: backend marketType=`crypto`, sorted by PnL.
+- Top Bull: long exposure share > 80%, sorted by PnL.
+- Top Bears: short exposure share > 80%, sorted by PnL.
+- Top FatBot Selection: manual list in `FATBOT_SELECTION_ADDRESSES`, sorted by PnL.
+- Favourite: locally starred wallets/vaults.
+
+Manual selection list:
+- Edit `frontend/app.js`
+- Add addresses to:
+  `const FATBOT_SELECTION_ADDRESSES = [];`
+
+Changed:
+- `frontend/index.html`
+- `frontend/app.js`
+- `frontend/styles.css`
+
+
+## v121 Category runtime fix
+Fixes v120 not loading leaderboard.
+
+Cause:
+- HTML tabs were updated to new category names.
+- Runtime JS helper functions for category loading were missing from the packaged `app.js`.
+- `bindLeaderboardCategoryTabs()` was called but not defined, so JS stopped before `loadAll()` and no `/api/traders` request was sent.
+
+Fix:
+- Added missing category helpers:
+  - `FATBOT_SELECTION_ADDRESSES`
+  - `categoryMarketType`
+  - `syncCategoryToMarketFilter`
+  - `reloadLeaderboardOnly`
+  - `bindLeaderboardCategoryTabs`
+- Initial category defaults to Top TradFi.
+- Categories now trigger proper backend reloads.
+
+Changed:
+- `frontend/app.js`
+- `frontend/index.html`
+- `frontend/styles.css`
+
+
+## v122 Fixed categories, no filter bar
+Removed the free filter bar under leaderboard categories.
+
+Remaining fixed categories:
+- Top TradFi
+- Top Crypto
+- Top Bull
+- Top Bears
+- Top FatBot Selection
+- Favourite
+
+Fixed query assumptions:
+- window: 30D
+- sort: PnL
+- minTrades: 0
+- minDaysActive: 0
+- limit: 50
+- marketType is controlled by category:
+  - Top TradFi -> tradfi
+  - Top Crypto -> crypto
+  - others -> all, then local category filtering
+
+Changed:
+- `frontend/index.html`
+- `frontend/app.js`
+- `frontend/styles.css`
+
+
+## v123 Category click/load fix
+Fixes v122 stuck on "Loading traders..." and category buttons not working.
+
+Cause:
+- v122 called category runtime functions, but the packaged app.js did not include them.
+- `syncCategoryToMarketFilter()` was undefined before initial `loadAll()`, so JS stopped before API requests.
+
+Fix:
+- Restored category runtime:
+  - `categoryMarketType`
+  - `syncCategoryToMarketFilter`
+  - `reloadLeaderboardOnly`
+  - `bindLeaderboardCategoryTabs`
+  - `FATBOT_SELECTION_ADDRESSES`
+- Ensured `loadAll()` is async.
+- Kept filter bar removed.
+
+
+## v124 Speed + profile chart fallback
+Goal:
+- Keep mini leaderboard charts.
+- Keep large profile charts.
+- Reduce leaderboard loading time.
+
+Speed changes:
+- Reduced default live exposure enrichment caps:
+  - TradFi/current-position scan default: 250 rows
+  - Non-TradFi exposure scan default: 120 rows
+  - Market-type candidate scan default: 300 TradFi / 180 non-TradFi
+- These are still configurable with env variables:
+  - `TOP_TRADERS_EXPOSURE_ENRICH_LIMIT`
+  - existing market/candidate env settings where applicable
+
+Chart protection:
+- Large profile chart now falls back to the already-loaded real mini sparkline points if `portfolio_chart_points` is missing.
+- This prevents the profile graph from disappearing when the slower full portfolio chart attach is unavailable.
+- No fake values are invented; fallback uses real `pnl_sparkline` values from Hyperliquid portfolio PnL history.
+
+Changed:
+- `backend/app/services.py`
+- `frontend/app.js`
+- `frontend/index.html`
+
+
+## v125 Top Trades + TradFi 70%
+Changes:
+- Added new fixed category: `Top Trades`.
+  - No TradFi/Crypto/Bull/Bear filter.
+  - Fixed 30D PnL ranking.
+- Top TradFi threshold changed to 70% open-position count share.
+- Top Crypto remains 70% crypto exposure threshold.
+- Mini leaderboard charts remain.
+- Large profile charts remain.
+
+Categories:
+- Top Trades
+- Top TradFi
+- Top Crypto
+- Top Bull
+- Top Bears
+- Top FatBot Selection
+- Favourite
+
+Changed:
+- `backend/app/services.py`
+- `frontend/index.html`
+- `frontend/app.js`
+- `frontend/styles.css`
+
+
+## v126 Server-side leaderboard snapshot cache
+Major performance update:
+- Added server-side precomputed leaderboard snapshots in SQLite.
+- Users no longer trigger slow TradFi/Crypto/Bull/Bear scans on every category click.
+- Background worker refreshes snapshots every 5 minutes by default.
+- UI reads `/api/leaderboard-snapshot/{category}` for instant category display.
+- Last good snapshot remains available even if a refresh fails.
+
+No external database required:
+- Uses existing local `copytrading.db` SQLite.
+- New tables:
+  - `leaderboard_snapshots`
+  - `leaderboard_snapshot_rows`
+
+New endpoints:
+- `GET /api/leaderboard-snapshot/{category}`
+- `GET /api/leaderboard-snapshot-status`
+- `POST /api/leaderboard-snapshot-refresh`
+
+Config:
+- `LEADERBOARD_SNAPSHOT_ENABLED=true`
+- `LEADERBOARD_SNAPSHOT_REFRESH_SECONDS=300`
+- `LEADERBOARD_SNAPSHOT_POOL_LIMIT=200`
+- `LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT=50`
+
+Preserved:
+- Mini leaderboard sparkline.
+- Large profile charts.
+- Profile chart fallback from mini sparkline.
+- All copytrading/favourite/manual selection functionality.
+
+
+## v127 FatBot Selection manual addresses
+Added 39 manual wallet addresses to FatBot Selection.
+
+FatBot Selection behavior:
+- Built server-side in the background snapshot worker.
+- Uses the manual address list.
+- Wallets with no current open positions are hidden.
+- Sorted by 30D PnL.
+- Mini leaderboard chart remains.
+- Profile charts remain.
+
+Config:
+- `FATBOT_SELECTION_WORKERS=12`
+
+Changed:
+- `frontend/app.js`
+- `backend/app/services.py`
+- `frontend/index.html`

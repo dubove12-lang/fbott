@@ -1968,3 +1968,563 @@ button[data-close="traderModal"] {
     min-height: 100vh;
   }
 }
+
+
+/* v108: two-column copytrading layout.
+   Remove right-side Hot wallets / Live feed area from the active layout.
+   PnL Leaderboard uses roughly 2/3 of the screen; copytrading modules move to the right. */
+@media (min-width: 1000px) {
+  .app-shell {
+    grid-template-columns: minmax(760px, 2fr) minmax(460px, 1fr) !important;
+    gap: 18px !important;
+  }
+
+  .right-col {
+    display: none !important;
+  }
+
+  .middle-col {
+    min-width: 0 !important;
+  }
+
+  .left-col .leaderboard-panel {
+    min-height: calc(100vh - 150px);
+  }
+
+  .trader-row {
+    grid-template-columns: 30px 44px minmax(145px, 1.25fr) minmax(48px, .42fr) minmax(116px, .72fr) minmax(132px, .72fr) minmax(106px, .68fr) minmax(58px, .42fr) auto !important;
+    gap: 12px;
+  }
+
+  .trader-row > * {
+    min-width: 0;
+  }
+
+  .sparkline-col {
+    min-width: 0;
+  }
+
+  .sparkline-wrap {
+    width: 100%;
+    max-width: 132px;
+    height: 34px;
+    color: var(--green);
+    opacity: .95;
+  }
+
+  .sparkline-wrap.negative {
+    color: var(--red);
+  }
+
+  .sparkline-wrap svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    filter: drop-shadow(0 0 6px rgba(32,228,151,.12));
+  }
+
+  .sparkline-empty {
+    width: 100%;
+    max-width: 132px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    color: var(--muted);
+    font-weight: 900;
+  }
+}
+
+@media (min-width: 1000px) and (max-width: 1450px) {
+  .trader-row {
+    grid-template-columns: 28px 40px minmax(120px, 1.15fr) minmax(42px, .36fr) minmax(92px, .62fr) minmax(104px, .62fr) minmax(90px, .56fr) minmax(52px, .35fr) auto !important;
+    gap: 9px;
+  }
+
+  .sparkline-wrap,
+  .sparkline-empty {
+    max-width: 104px;
+  }
+
+  .optional-leader-col {
+    display: block !important;
+  }
+}
+
+
+/* v109 profile portfolio charts */
+.profile-chart-section {
+  margin-top: 18px;
+}
+
+.profile-chart-title {
+  margin-bottom: 10px;
+}
+
+.profile-chart-title p {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.profile-chart-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.profile-chart-card {
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.07);
+  background: linear-gradient(180deg, rgba(59,50,72,.82), rgba(43,36,55,.82));
+  padding: 14px;
+  min-width: 0;
+}
+
+.profile-chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.profile-chart-head h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.profile-chart-head p {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.profile-chart-head strong {
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.profile-line-chart {
+  width: 100%;
+  height: 170px;
+  color: var(--green);
+  overflow: visible;
+}
+
+.profile-line-chart.negative {
+  color: var(--red);
+}
+
+.profile-line-chart line {
+  stroke: rgba(255,255,255,.08);
+  stroke-width: 1;
+}
+
+.profile-chart-card.warning-chart .profile-line-chart {
+  color: #ffe45c;
+}
+
+.profile-chart-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.profile-chart-empty {
+  min-height: 90px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-weight: 850;
+  border: 1px dashed rgba(255,255,255,.12);
+  border-radius: 14px;
+}
+
+@media (min-width: 1200px) {
+  .profile-chart-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-chart-card.warning-chart {
+    grid-column: span 2;
+  }
+}
+
+
+/* v111: profile chart is now one top chart with toggle buttons */
+.profile-chart-section-top {
+  margin-top: 0;
+  margin-bottom: 18px;
+}
+
+.profile-chart-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+
+.profile-chart-topline h3 {
+  margin-top: 9px;
+  font-size: 18px;
+}
+
+.profile-chart-topline p {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.profile-chart-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.profile-chart-toggle-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.045);
+  color: var(--muted);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.profile-chart-toggle-btn.active {
+  color: #20152b;
+  background: linear-gradient(180deg, #f6df54, #d6b927);
+  border-color: rgba(255,255,255,.18);
+}
+
+.profile-chart-single-card {
+  border-radius: 22px;
+  border: 1px solid rgba(255,255,255,.075);
+  background: linear-gradient(180deg, rgba(59,50,72,.88), rgba(43,36,55,.86));
+  padding: 16px;
+  min-width: 0;
+}
+
+.profile-chart-active-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 10px;
+}
+
+.profile-chart-active-head h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.profile-chart-active-head p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-chart-active-value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.profile-chart-active-value strong {
+  display: block;
+  font-size: 17px;
+}
+
+.profile-chart-active-value span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.profile-chart-single-card .profile-line-chart {
+  height: 260px;
+}
+
+.profile-line-chart.yellow-chart {
+  color: #ffe45c;
+}
+
+@media (max-width: 900px) {
+  .profile-chart-topline,
+  .profile-chart-active-head {
+    flex-direction: column;
+  }
+
+  .profile-chart-toggle {
+    justify-content: flex-start;
+  }
+
+  .profile-chart-active-value {
+    text-align: left;
+  }
+}
+
+
+/* v114: profile head first, chart below, toggles bottom-right, less stat rows */
+.profile-head-top {
+  margin-bottom: 18px;
+}
+
+.profile-chart-section-top {
+  margin-top: 0;
+  margin-bottom: 18px;
+}
+
+.profile-chart-topline {
+  margin-bottom: 10px;
+}
+
+.profile-chart-single-card {
+  position: relative;
+  padding-bottom: 54px;
+}
+
+.profile-chart-toggle-bottom {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  justify-content: flex-end;
+}
+
+.profile-chart-single-card .profile-chart-foot {
+  padding-right: 330px;
+}
+
+.hydro-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  .profile-chart-single-card {
+    padding-bottom: 16px;
+  }
+
+  .profile-chart-toggle-bottom {
+    position: static;
+    margin-top: 12px;
+    justify-content: flex-start;
+  }
+
+  .profile-chart-single-card .profile-chart-foot {
+    padding-right: 0;
+  }
+}
+
+
+/* v115: profile stats are 9 cards in 3 rows × 3 columns */
+.hydro-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+}
+
+.hydro-detail-grid .detail-card {
+  min-width: 0;
+  padding: 15px 14px;
+}
+
+.hydro-detail-grid .detail-card strong {
+  font-size: 15px;
+  line-height: 1.15;
+  word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  .hydro-detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+
+/* v116: leaderboard columns + taller left module aligned with copytrading module */
+@media (min-width: 1000px) {
+  .left-col {
+    min-height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 120px);
+  }
+
+  .left-col .leaderboard-panel {
+    height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 128px) !important;
+    min-height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 128px) !important;
+    max-height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 128px) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  .left-col #traderList {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-right: 4px;
+  }
+
+  .trader-row {
+    grid-template-columns:
+      30px
+      44px
+      minmax(140px, 1.20fr)
+      minmax(116px, .72fr)
+      minmax(104px, .62fr)
+      minmax(78px, .48fr)
+      minmax(132px, .72fr)
+      minmax(106px, .64fr)
+      minmax(58px, .38fr)
+      auto !important;
+    gap: 11px;
+  }
+
+  .trader-row .rank {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1000px) and (max-width: 1450px) {
+  .trader-row {
+    grid-template-columns:
+      28px
+      40px
+      minmax(118px, 1.10fr)
+      minmax(92px, .60fr)
+      minmax(86px, .52fr)
+      minmax(66px, .42fr)
+      minmax(104px, .58fr)
+      minmax(88px, .52fr)
+      minmax(50px, .32fr)
+      auto !important;
+    gap: 8px;
+  }
+}
+
+
+/* v117: shrink left leaderboard module by about two rows from v116 */
+@media (min-width: 1000px) {
+  .left-col {
+    min-height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 250px) !important;
+  }
+
+  .left-col .leaderboard-panel {
+    height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 258px) !important;
+    min-height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 258px) !important;
+    max-height: calc((100vh * var(--fatbot-ui-zoom-inverse, 1)) - 258px) !important;
+  }
+
+  .left-col #traderList {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+}
+
+
+/* v119: leaderboard row order = PnL, Value, Volume, Exposure, Win Rate, Chart */
+@media (min-width: 1000px) {
+  .trader-row {
+    grid-template-columns:
+      30px
+      44px
+      minmax(140px, 1.15fr)
+      minmax(112px, .66fr)
+      minmax(112px, .66fr)
+      minmax(120px, .70fr)
+      minmax(76px, .44fr)
+      minmax(72px, .42fr)
+      minmax(132px, .72fr)
+      auto !important;
+    gap: 11px;
+  }
+}
+
+@media (min-width: 1000px) and (max-width: 1450px) {
+  .trader-row {
+    grid-template-columns:
+      28px
+      40px
+      minmax(118px, 1.05fr)
+      minmax(94px, .56fr)
+      minmax(94px, .56fr)
+      minmax(92px, .54fr)
+      minmax(64px, .38fr)
+      minmax(62px, .36fr)
+      minmax(104px, .58fr)
+      auto !important;
+    gap: 8px;
+  }
+}
+
+
+/* v120: leaderboard category tabs */
+.category-tabs {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.category-tabs .leader-tab {
+  white-space: nowrap;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+@media (max-width: 1300px) {
+  .category-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    height: auto;
+    padding: 6px;
+  }
+}
+
+
+/* v121: category tabs runtime fixed */
+.category-tabs {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.category-tabs .leader-tab {
+  white-space: nowrap;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+@media (max-width: 1300px) {
+  .category-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    height: auto;
+    padding: 6px;
+  }
+}
+
+
+/* v122: removed free filter bar; categories are fixed */
+.leaderboard-tabs.category-tabs {
+  margin-bottom: 14px;
+}
+
+.leaderboard-hint {
+  margin-top: 0;
+}
+
+
+/* v125: seven fixed leaderboard categories */
+.category-tabs {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+@media (max-width: 1450px) {
+  .category-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    height: auto;
+    padding: 6px;
+  }
+}
