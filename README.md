@@ -1689,3 +1689,55 @@ Changed:
 - `frontend/app.js`
 - `backend/app/services.py`
 - `frontend/index.html`
+
+
+## v128 Snapshot chart fix
+Fixes:
+- Mini 7D PnL charts missing in some categories.
+- FatBot Selection rows showing without mini charts.
+- Old v126/v127 SQLite snapshots can remain stale, so v128 adds a snapshot version marker.
+
+What changed:
+- Every final snapshot category is sparkline-enriched after filtering.
+- Old snapshot rows without v128 version are treated as stale and background refresh is triggered.
+- FatBot Selection source label is now `FatBot Selection wallet`.
+- Large profile charts remain protected.
+
+Important:
+- After installing v128, restart backend and let it rebuild snapshots once.
+- Or call `POST /api/leaderboard-snapshot-refresh`.
+
+
+## v129 FatBot Selection real wallet scan
+Fixes the FatBot Selection category.
+
+What was wrong before:
+- FatBot Selection used the wrong enrichment path.
+- Some rows showed zero PnL/volume because live stats overwrote/failed instead of preserving Hydromancer stats.
+- It only checked limited/default state in some cases, so some wallets with positions could be missed.
+
+v129 behavior:
+- Every manual wallet is scanned directly.
+- Current positions are fetched across all relevant dexes.
+- Wallets with no open positions are hidden.
+- Hydromancer PnL/volume/win stats are preserved when available.
+- Hyperliquid portfolio/fills are used only as fallback.
+- Mini charts and large profile charts remain.
+
+
+## v130 FatBot Selection public HL fix
+Fixes:
+- FatBot Selection no longer uses a broken/partial enrichment path.
+- FatBot Selection is now built directly from public Hyperliquid endpoints:
+  - current positions across relevant dexes
+  - account value
+  - exposure
+  - portfolio PnL/account value history
+  - fills fallback for volume/trades/win rate
+- Wallets with no open positions are hidden.
+- Profile modal can now open FatBot Selection rows from SQLite snapshot rows.
+- Snapshot version bumped to force rebuild.
+
+Mini chart fix:
+- Every final snapshot category now gets a second chart-enrichment pass.
+- If the mini sparkline is missing, it falls back to profile portfolio chart data.

@@ -122,7 +122,7 @@ function sideClass(side) {
 }
 
 function isHydro(t) {
-  return t && t.source === 'hydromancer';
+  return t && (t.source === 'hydromancer' || t.source === 'fatbot_selection');
 }
 function pnlUsdValue(t) {
   if (!t) return 0;
@@ -644,7 +644,7 @@ function renderLeaderboardTabs() {
   } else if (state.activeLeaderTab === 'bear') {
     hint.textContent = 'Top Bears: short exposure share > 80%, sorted by 30D PnL.';
   } else if (state.activeLeaderTab === 'fatbot_selection') {
-    hint.textContent = 'Top FatBot Selection: manual wallet list, only wallets with open positions, sorted by 30D PnL.';
+    hint.textContent = 'Top FatBot Selection: public Hyperliquid scan of manual wallets, only wallets with open positions, sorted by 30D PnL.';
   } else if (state.activeLeaderTab === 'favourite') {
     hint.textContent = 'Favourite traders and vaults saved locally in this browser.';
   } else {
@@ -713,7 +713,7 @@ function renderTraders() {
     const isFav = state.favourites.has(favKey);
     const isVault = t.source === 'fatbot_vault';
     const isLive = isHydro(t) || isVault;
-    const subtitle = isVault ? 'FatBot multi-copy vault' : (isLive ? 'Hydromancer PnL leaderboard' : t.label);
+    const subtitle = t.source === 'fatbot_selection' ? 'FatBot Selection wallet' : (isVault ? 'FatBot multi-copy vault' : (isLive ? 'Hydromancer PnL leaderboard' : t.label));
     const actionLabel = isVault ? 'Copy Vault' : 'Copy Wallet';
 
     return `
@@ -2274,3 +2274,9 @@ function renderTargets() { /* removed in v9 */ }
 /* v126 server-side precomputed leaderboard snapshots; charts preserved */
 
 /* v127 FatBot Selection addresses + hide no-open-position wallets */
+
+/* v128 snapshot chart enrichment: never remove mini/profile charts */
+
+/* v129 FatBot Selection uses direct real wallet scan */
+
+/* v130 FatBot Selection public HL direct scan + snapshot profile lookup */

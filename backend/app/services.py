@@ -74,6 +74,7 @@ _LEADERBOARD_SNAPSHOT_POOL_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_POOL_LIMI
 _LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT", "50"))
 _LEADERBOARD_SNAPSHOT_ENABLED = os.getenv("LEADERBOARD_SNAPSHOT_ENABLED", "true").lower() not in ("0", "false", "no", "off")
 _LEADERBOARD_SNAPSHOT_CATEGORIES = ["trades", "tradfi", "crypto", "bull", "bear", "fatbot_selection"]
+_LEADERBOARD_SNAPSHOT_VERSION = "v130-fatbot-public-hl"
 
 
 
@@ -142,6 +143,7 @@ def _leaderboard_snapshot_write(category: str, rows: List[Dict[str, Any]], statu
         item["rank"] = idx
         item["snapshot_category"] = category
         item["snapshot_updated_at"] = now
+        item["snapshot_version"] = _LEADERBOARD_SNAPSHOT_VERSION
         clean_rows.append(item)
 
     with get_db() as db:
@@ -190,16 +192,171 @@ def _leaderboard_sort_pnl(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 
+
+def _leaderboard_snapshot_enrich_category_charts(rows: List[Dict[str, Any]], window: str = "30d") -> List[Dict[str, Any]]:
+    """
+    Ensure every final visible snapshot category row gets a mini chart when
+    Hyperliquid portfolio history is available.
+
+    v130:
+    - First uses the existing bulk sparkline path.
+    - Then retries missing rows through profile portfolio chart data.
+    - This protects TradFi/Crypto/Bull/Bears and FatBot Selection from losing
+      mini charts after category filtering.
+    """
+    if not rows:
+        return rows
+
+    old_limit = os.environ.get("TOP_TRADERS_SPARKLINE_ENRICH_LIMIT")
+    try:
+        os.environ["TOP_TRADERS_SPARKLINE_ENRICH_LIMIT"] = str(max(len(rows), _LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT))
+        enriched = _enrich_top_traders_pnl_sparkline([dict(r) for r in rows], {"window": window})
+    finally:
+        if old_limit is None:
+            os.environ.pop("TOP_TRADERS_SPARKLINE_ENRICH_LIMIT", None)
+        else:
+            os.environ["TOP_TRADERS_SPARKLINE_ENRICH_LIMIT"] = old_limit
+
+    missing_indexes = [idx for idx, row in enumerate(enriched) if not row.get("pnl_sparkline")]
+    if not missing_indexes:
+        return enriched
+
+    try:
+        workers = int(os.getenv("SNAPSHOT_PROFILE_CHART_FALLBACK_WORKERS", "8"))
+    except Exception:
+        workers = 8
+    workers = max(1, min(workers, len(missing_indexes)))
+
+    def attach_one(idx: int, row: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+        address = str(row.get("address") or "")
+        if not address:
+            return idx, row
+        try:
+            updated = _attach_portfolio_chart_data(dict(row), address, {"window": window})
+            return idx, updated
+        except Exception as exc:
+            row["snapshot_chart_fallback_status"] = f"error: {exc}"
+            return idx, row
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(attach_one, idx, dict(enriched[idx])): idx for idx in missing_indexes}
+        for future in as_completed(future_map):
+            idx = future_map[future]
+            try:
+                out_idx, row = future.result()
+                enriched[out_idx] = row
+            except Exception:
+                pass
+
+    return enriched
+
+
+
+
+def _fatbot_selection_apply_public_hl_portfolio_stats(row: Dict[str, Any], hl_client: HyperliquidClient, address: str) -> Dict[str, Any]:
+    """
+    Public Hyperliquid portfolio fallback for manual FatBot Selection.
+
+    This fills PnL/volume/account value without relying on Hydromancer.
+    """
+    try:
+        portfolio_stats = hl_client.portfolio_stats(address, "30d")
+    except Exception as exc:
+        row["portfolio_status"] = f"error: {exc}"
+        return row
+
+    if not portfolio_stats:
+        return row
+
+    row["portfolio_stats_source"] = portfolio_stats.get("source")
+    row["portfolio_period"] = portfolio_stats.get("portfolio_period")
+
+    try:
+        pnl = portfolio_stats.get("pnl")
+        if pnl is not None:
+            row["total_pnl"] = float(pnl or 0)
+            row["pnl_usd"] = row["total_pnl"]
+            row["pnl_source"] = "hyperliquid_portfolio"
+    except Exception:
+        pass
+
+    try:
+        volume = portfolio_stats.get("volume")
+        if volume is not None:
+            row["volume"] = float(volume or 0)
+            row["volume_traded"] = row["volume"]
+    except Exception:
+        pass
+
+    try:
+        account_value = portfolio_stats.get("account_value")
+        if account_value is not None and float(account_value or 0) > 0:
+            row["account_value"] = float(account_value or 0)
+            row["account_value_source"] = "hyperliquid_portfolio"
+    except Exception:
+        pass
+
+    return row
+
+
+def _fatbot_selection_apply_public_hl_fill_stats(row: Dict[str, Any], hl_client: HyperliquidClient, address: str) -> Dict[str, Any]:
+    """
+    Public Hyperliquid fills fallback for volume/trades/win-rate.
+    """
+    try:
+        fill_stats = hl_client.user_30d_fill_stats(address, "30d")
+    except Exception as exc:
+        row["fills_status"] = f"error: {exc}"
+        return row
+
+    if not fill_stats:
+        return row
+
+    try:
+        if not row.get("volume"):
+            row["volume"] = float(fill_stats.get("volume") or 0)
+            row["volume_traded"] = row["volume"]
+    except Exception:
+        pass
+
+    try:
+        row["trades"] = int(fill_stats.get("fills") or row.get("trades") or 0)
+        row["total_trades"] = row["trades"]
+    except Exception:
+        pass
+
+    try:
+        row["win_rate"] = float(fill_stats.get("win_rate") or row.get("win_rate") or 0)
+    except Exception:
+        pass
+
+    # Use closed PnL only when portfolio did not provide PnL.
+    try:
+        if not row.get("pnl_source"):
+            row["total_pnl"] = float(fill_stats.get("closed_pnl") or row.get("total_pnl") or 0)
+            row["pnl_usd"] = row["total_pnl"]
+            row["pnl_source"] = "hyperliquid_userFillsByTime"
+    except Exception:
+        pass
+
+    return row
+
+
+
 def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
     """
-    Manual FatBot Selection.
+    Manual FatBot Selection built from public Hyperliquid endpoints only.
 
-    Only wallets with current open positions are shown.
-    This runs in the background snapshot worker, not per user click.
+    v130:
+    - every manual wallet is scanned directly;
+    - positions are fetched across all relevant dexes;
+    - wallets with no open positions are hidden;
+    - PnL/volume/account value come from public HL portfolio/fills;
+    - mini/profile charts are attached from public HL portfolio history.
     """
-    rows: List[Dict[str, Any]] = []
+    addresses: List[str] = []
     seen = set()
-    for idx, address in enumerate(FATBOT_SELECTION_ADDRESSES, start=1):
+    for address in FATBOT_SELECTION_ADDRESSES:
         addr = str(address or "").strip()
         if not addr:
             continue
@@ -207,14 +364,22 @@ def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
-        rows.append({
-            "address": addr,
+        addresses.append(addr)
+
+    if not addresses:
+        return []
+
+    base_rows: List[Dict[str, Any]] = []
+    for idx, address in enumerate(addresses, start=1):
+        base_rows.append({
+            "address": address,
             "label": f"FatBot Selection #{idx}",
-            "source": "hydromancer",
+            "source": "fatbot_selection",
             "rank": idx,
             "is_fatbot_selection": True,
             "total_pnl": 0,
             "pnl_usd": 0,
+            "pnl_source": "not_loaded",
             "volume": 0,
             "volume_traded": 0,
             "win_rate": 0,
@@ -222,6 +387,7 @@ def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
             "total_trades": 0,
             "days_active": 0,
             "account_age_days": 0,
+            "account_value": 0,
             "positions": [],
             "open_positions": 0,
             "leaderboard_window": "30d",
@@ -229,48 +395,95 @@ def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
             "requested_market_type": "fatbot_selection",
         })
 
-    if not rows:
-        return []
-
     try:
-        workers = int(os.getenv("FATBOT_SELECTION_WORKERS", "12"))
+        workers = int(os.getenv("FATBOT_SELECTION_WORKERS", "10"))
     except Exception:
-        workers = 12
-    workers = max(1, min(workers, len(rows)))
+        workers = 10
+    workers = max(1, min(workers, len(base_rows)))
 
     def enrich_one(item: Dict[str, Any]) -> Dict[str, Any]:
         address = str(item.get("address") or "")
+        if not address:
+            return item
+
         try:
-            item = _enrich_with_hyperliquid_live_stats(item, address, window="30d")
+            hl_client = HyperliquidClient()
+            try:
+                all_mids = hl_client.all_mids()
+            except Exception:
+                all_mids = {}
+
+            # Public current positions across main + relevant HIP-3/XYZ dexes.
+            hl_state, positions, dex_status = _hyperliquid_positions_all_relevant_dexes(hl_client, address, all_mids=all_mids)
+            item["dex_state_status"] = dex_status
+            item["hl_state_status"] = "ok" if (hl_state or positions) else "empty"
+
+            if hl_state:
+                item["account_value"] = _extract_account_value_from_state(hl_state) or item.get("account_value", 0)
+                item["margin_summary"] = hl_state.get("marginSummary") or hl_state.get("crossMarginSummary") or {}
+
+            item["positions"] = positions or []
+            item["open_positions"] = len(item["positions"])
+            item = _attach_current_exposure_metrics(item)
             if item.get("positions"):
                 item = _attach_market_type_metrics(item)
+
+            # Public HL stats. Portfolio is primary for PnL/account value/volume;
+            # fills are fallback for trades/win rate/volume.
+            item = _fatbot_selection_apply_public_hl_portfolio_stats(item, hl_client, address)
+            item = _fatbot_selection_apply_public_hl_fill_stats(item, hl_client, address)
+
+            if not item.get("account_value"):
+                item["account_value"] = _account_value_from_portfolio_fallback(hl_client, address, "30d")
+                if item.get("account_value"):
+                    item["account_value_source"] = "hyperliquid_portfolio_fallback"
+
+            item = _attach_portfolio_chart_data(item, address, {"window": "30d"})
+
+            account_value = float(item.get("account_value") or 0)
+            total_pnl = float(item.get("total_pnl") or item.get("pnl_usd") or 0)
+            item["total_pnl"] = total_pnl
+            item["pnl_usd"] = total_pnl
+            item["pnl_pct"] = (total_pnl / account_value * 100.0) if account_value else 0.0
+            item["pnl_display_mode"] = "usd"
+
         except Exception as exc:
-            item["fatbot_selection_status"] = f"error: {exc}"
+            item["hl_state_status"] = f"fatbot_selection_error: {exc}"
+            item.setdefault("positions", [])
+            item.setdefault("open_positions", 0)
+
         return item
 
-    enriched: List[Optional[Dict[str, Any]]] = [None] * len(rows)
+    enriched: List[Optional[Dict[str, Any]]] = [None] * len(base_rows)
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {executor.submit(enrich_one, dict(row)): idx for idx, row in enumerate(rows)}
+        future_map = {executor.submit(enrich_one, dict(row)): idx for idx, row in enumerate(base_rows)}
         for future in as_completed(future_map):
             idx = future_map[future]
             try:
                 enriched[idx] = future.result()
             except Exception:
-                enriched[idx] = rows[idx]
+                enriched[idx] = base_rows[idx]
 
     visible: List[Dict[str, Any]] = []
+    hidden_no_positions = 0
     for idx, enriched_item in enumerate(enriched):
-        row = enriched_item if enriched_item is not None else rows[idx]
+        row = enriched_item if enriched_item is not None else base_rows[idx]
         if int(row.get("open_positions") or 0) > 0 or bool(row.get("positions")):
             visible.append(row)
+        else:
+            hidden_no_positions += 1
 
     visible = _leaderboard_sort_pnl(visible)
-    visible = _enrich_top_traders_pnl_sparkline(visible, {"window": "30d"})
+    visible = _leaderboard_snapshot_enrich_category_charts(visible, "30d")
+
     for idx, row in enumerate(visible, start=1):
         row["rank"] = idx
         row["snapshot_category"] = "fatbot_selection"
-    return visible
+        row["fatbot_selection_hidden_no_positions_count"] = hidden_no_positions
+        row["fatbot_selection_total_manual_wallets"] = len(base_rows)
+        row["snapshot_version"] = _LEADERBOARD_SNAPSHOT_VERSION
 
+    return visible
 
 
 def _leaderboard_snapshot_build_from_pool(pool: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -328,6 +541,12 @@ def precompute_leaderboard_snapshots(force: bool = False) -> Dict[str, Any]:
 
         category_rows = _leaderboard_snapshot_build_from_pool(pool)
         category_rows["fatbot_selection"] = _leaderboard_snapshot_build_fatbot_selection()
+
+        # Critical: after filtering into categories, enrich the final visible rows
+        # again so mini charts are present in every category, not only in Top Trades.
+        for category, rows in list(category_rows.items()):
+            category_rows[category] = _leaderboard_snapshot_enrich_category_charts(rows, "30d")
+
         for category, rows in category_rows.items():
             _leaderboard_snapshot_write(category, rows, status="ready", error=None)
 
@@ -356,16 +575,18 @@ def get_leaderboard_snapshot(category: str = "trades") -> Dict[str, Any]:
     meta, rows = _leaderboard_snapshot_rows_from_db(category)
     running = _LEADERBOARD_SNAPSHOT_LOCK.locked()
 
-    if not meta:
+    stale_version = bool(rows) and any(str(row.get("snapshot_version") or "") != _LEADERBOARD_SNAPSHOT_VERSION for row in rows[:3])
+
+    if (not meta) or stale_version:
         # Kick off a background build, but do not block the user request.
         start_leaderboard_snapshot_worker(run_once=True)
         return {
             "category": category,
-            "status": "preparing",
-            "updated_at": None,
+            "status": "preparing" if not stale_version else "refreshing",
+            "updated_at": meta.get("updated_at") if meta else None,
             "age_seconds": None,
             "running": True,
-            "rows": [],
+            "rows": [] if stale_version else [],
             "error": None,
         }
 
@@ -1838,6 +2059,36 @@ def _find_trader_in_leaderboard_caches(address: str) -> Optional[Dict[str, Any]]
                         return out
             except Exception:
                 continue
+
+    # Also search server-side snapshot rows persisted in SQLite.
+    # This is critical for FatBot Selection, because those rows are not stored in
+    # the in-memory Hydromancer leaderboard cache.
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT payload FROM leaderboard_snapshot_rows ORDER BY rank ASC"
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("address") or "").lower() != target:
+                continue
+            positions = payload.get("positions") or []
+            if not positions:
+                continue
+            out = dict(payload)
+            out["history"] = []
+            out["profile_mode"] = "from_server_side_snapshot_with_positions"
+            out["profile_cache_source"] = "leaderboard_snapshot_rows"
+            out["open_positions"] = len(positions)
+            out = _attach_current_exposure_metrics(out)
+            return out
+    except Exception:
+        pass
 
     return None
 
