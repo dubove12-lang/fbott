@@ -1741,3 +1741,23 @@ Fixes:
 Mini chart fix:
 - Every final snapshot category now gets a second chart-enrichment pass.
 - If the mini sparkline is missing, it falls back to profile portfolio chart data.
+
+
+## v132 FatBot Selection audit
+Adds a diagnostic endpoint instead of another blind patch.
+
+New endpoint:
+- `GET /api/debug/fatbot-selection-audit`
+
+It returns every manual FatBot Selection wallet with:
+- included/excluded decision
+- reason
+- open_positions
+- positions_by_dex
+- dex_state_status
+- account_value
+- portfolio chart availability
+- mini sparkline availability
+- errors
+
+Use this to identify exactly why a wallet with real open positions is being missed by the backend scan.

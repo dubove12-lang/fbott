@@ -74,7 +74,7 @@ _LEADERBOARD_SNAPSHOT_POOL_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_POOL_LIMI
 _LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT", "50"))
 _LEADERBOARD_SNAPSHOT_ENABLED = os.getenv("LEADERBOARD_SNAPSHOT_ENABLED", "true").lower() not in ("0", "false", "no", "off")
 _LEADERBOARD_SNAPSHOT_CATEGORIES = ["trades", "tradfi", "crypto", "bull", "bear", "fatbot_selection"]
-_LEADERBOARD_SNAPSHOT_VERSION = "v130-fatbot-public-hl"
+_LEADERBOARD_SNAPSHOT_VERSION = "v132-fatbot-audit"
 
 
 
@@ -647,6 +647,132 @@ def start_leaderboard_snapshot_worker(run_once: bool = False) -> Dict[str, Any]:
     thread = threading.Thread(target=worker_loop, daemon=True, name="leaderboard-snapshot-worker")
     thread.start()
     return {"started": True, "enabled": True, "refresh_seconds": _LEADERBOARD_SNAPSHOT_REFRESH_SECONDS}
+
+
+
+
+def debug_fatbot_selection_audit() -> Dict[str, Any]:
+    """
+    Diagnostic audit for every manual FatBot Selection wallet.
+
+    This does not hide any wallet. It shows exactly what the backend checked,
+    what current-position paths returned, and why a wallet would be included
+    or excluded from the visible FatBot Selection snapshot.
+    """
+    rows: List[Dict[str, Any]] = []
+    addresses: List[str] = []
+    seen = set()
+    for address in FATBOT_SELECTION_ADDRESSES:
+        addr = str(address or "").strip()
+        if not addr:
+            continue
+        key = addr.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        addresses.append(addr)
+
+    try:
+        workers = int(os.getenv("FATBOT_SELECTION_AUDIT_WORKERS", "8"))
+    except Exception:
+        workers = 8
+    workers = max(1, min(workers, max(1, len(addresses))))
+
+    def audit_one(address: str) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "address": address,
+            "included_by_current_backend": False,
+            "reason": "not_checked",
+            "open_positions": 0,
+            "positions": [],
+            "positions_by_dex": {},
+            "dex_state_status": {},
+            "hl_state_status": None,
+            "account_value": 0,
+            "has_pnl_sparkline": False,
+            "pnl_sparkline_points": 0,
+            "has_portfolio_chart_points": False,
+            "portfolio_chart_points": 0,
+            "errors": [],
+        }
+
+        try:
+            hl_client = HyperliquidClient()
+            try:
+                all_mids = hl_client.all_mids()
+            except Exception as exc:
+                all_mids = {}
+                out["errors"].append(f"all_mids_error: {exc}")
+
+            try:
+                hl_state, positions, dex_status = _hyperliquid_positions_all_relevant_dexes(hl_client, address, all_mids=all_mids)
+                out["dex_state_status"] = dex_status
+                out["hl_state_status"] = "ok" if (hl_state or positions) else "empty"
+                out["account_value"] = _extract_account_value_from_state(hl_state or {}) or 0
+                out["positions"] = positions or []
+                out["open_positions"] = len(out["positions"])
+                by_dex: Dict[str, int] = {}
+                for pos in out["positions"]:
+                    dex = str(pos.get("dex") or "main")
+                    by_dex[dex] = by_dex.get(dex, 0) + 1
+                out["positions_by_dex"] = by_dex
+            except Exception as exc:
+                out["reason"] = "positions_scan_error"
+                out["errors"].append(f"positions_scan_error: {exc}")
+                return out
+
+            try:
+                tmp = {"address": address}
+                tmp = _attach_portfolio_chart_data(tmp, address, {"window": "30d"})
+                pts = tmp.get("portfolio_chart_points") or []
+                out["has_portfolio_chart_points"] = bool(pts)
+                out["portfolio_chart_points"] = len(pts) if isinstance(pts, list) else 0
+                spark = tmp.get("pnl_sparkline") or []
+                out["has_pnl_sparkline"] = bool(spark)
+                out["pnl_sparkline_points"] = len(spark) if isinstance(spark, list) else 0
+            except Exception as exc:
+                out["errors"].append(f"portfolio_chart_error: {exc}")
+
+            if out["open_positions"] > 0:
+                out["included_by_current_backend"] = True
+                out["reason"] = "included_open_positions_found"
+            else:
+                out["included_by_current_backend"] = False
+                out["reason"] = "excluded_no_positions_found_by_backend_scan"
+
+            return out
+        except Exception as exc:
+            out["reason"] = "audit_error"
+            out["errors"].append(str(exc))
+            return out
+
+    audited: List[Optional[Dict[str, Any]]] = [None] * len(addresses)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(audit_one, address): idx for idx, address in enumerate(addresses)}
+        for future in as_completed(future_map):
+            idx = future_map[future]
+            try:
+                audited[idx] = future.result()
+            except Exception as exc:
+                audited[idx] = {
+                    "address": addresses[idx],
+                    "included_by_current_backend": False,
+                    "reason": "future_error",
+                    "errors": [str(exc)],
+                }
+
+    rows = [row if row is not None else {"address": addresses[idx], "reason": "missing_result"} for idx, row in enumerate(audited)]
+    included = [r for r in rows if r.get("included_by_current_backend")]
+    excluded = [r for r in rows if not r.get("included_by_current_backend")]
+
+    return {
+        "total_manual_wallets": len(addresses),
+        "included_count": len(included),
+        "excluded_count": len(excluded),
+        "included_addresses": [r.get("address") for r in included],
+        "excluded_addresses": [r.get("address") for r in excluded],
+        "rows": rows,
+    }
 
 
 

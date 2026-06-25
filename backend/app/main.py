@@ -76,6 +76,10 @@ def debug_tradfi_scan(
         min_days_active=min_days_active,
     )
 
+@app.get("/api/debug/fatbot-selection-audit")
+def debug_fatbot_selection_audit():
+    return services.debug_fatbot_selection_audit()
+
 @app.get("/api/market-registry")
 def market_registry():
     return services.get_market_registry()
