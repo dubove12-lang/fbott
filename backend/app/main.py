@@ -1,11 +1,12 @@
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from .database import init_db, seed_db
 from .schemas import WalletCreate, WalletSettingsPatch, PoolCreate
 from . import services
+from . import token_icons
 from .hydromancer_client import HydromancerError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -83,6 +84,20 @@ def debug_fatbot_selection_audit():
 @app.get("/api/market-registry")
 def market_registry():
     return services.get_market_registry()
+
+
+@app.get("/api/token-icon/{coin}")
+def token_icon(coin: str):
+    result = token_icons.resolve_token_icon(coin)
+    url = result.get("url")
+    if not url:
+        raise HTTPException(status_code=404, detail=f"No icon found for {coin}")
+    return RedirectResponse(url=url, status_code=302)
+
+@app.get("/api/token-icons")
+def token_icons_bulk(coins: str = Query("")):
+    symbols = [c.strip() for c in coins.split(",") if c.strip()]
+    return {c: token_icons.resolve_token_icon(c) for c in symbols}
 
 @app.post("/api/market-registry/refresh")
 def market_registry_refresh():

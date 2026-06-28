@@ -17,7 +17,21 @@ let state = {
   singleWalletName: '',
   copySetupMode: 'single',
   mainView: 'copytrading',
+  howItWorksIndex: 0,
   selectedSlot: null,
+  activeVaultBuilderSlot: null,
+  vaultBuilderStep: 0,
+  defaultVaultModalTab: 'stats',
+  defaultVaultMembers: JSON.parse(localStorage.getItem('fatbot_default_vault_members') || '[]'),
+  vaultMemberOverrides: JSON.parse(localStorage.getItem('fatbot_vault_member_overrides') || '{}'),
+  closedVaults: new Set(JSON.parse(localStorage.getItem('fatbot_closed_vaults') || '[]')),
+  closeVaultDialogOpen: false,
+  closeVaultWithdrawAddress: '',
+  closeVaultConfirmArmed: false,
+  activeSingleCopyWallet: null,
+  singleCopyCloseDialogOpen: false,
+  singleCopyCloseWithdrawAddress: '',
+  singleCopyCloseConfirmArmed: false,
   activeLeaderTab: 'trades',
   leaderboardSnapshotStatus: null,
   leaderboardFilters: {
@@ -29,6 +43,7 @@ let state = {
     marketType: 'all',
   },
   favourites: new Set(JSON.parse(localStorage.getItem('fatbot_copy_favourites') || '[]')),
+  walletAliases: JSON.parse(localStorage.getItem('fatbot_wallet_aliases') || '{}'),
   wizardStep: 0,
   generatedWallet: null,
   wizardSettings: {
@@ -179,6 +194,68 @@ function moneyOrDash(v) {
   return n ? fmtUsd(n) : '—';
 }
 
+function fmtLivePrice(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (Math.abs(n) >= 100) return n.toLocaleString('en-US', { maximumFractionDigits: 3 });
+  if (Math.abs(n) >= 1) return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+  return n.toLocaleString('en-US', { maximumFractionDigits: 6 });
+}
+
+function statusPulseDotHtml(status) {
+  const normalized = String(status || '').toLowerCase();
+  return `<div class="vault-status-dot-wrap ${normalized}" title="${String(status || '').toUpperCase()}"><span class="vault-status-dot ${normalized}"></span></div>`;
+}
+
+
+
+function normalizeAddressKey(address) {
+  return String(address || '').toLowerCase();
+}
+
+function saveWalletAliases() {
+  localStorage.setItem('fatbot_wallet_aliases', JSON.stringify(state.walletAliases || {}));
+}
+
+function walletDisplayName(itemOrAddress) {
+  const address = typeof itemOrAddress === 'string' ? itemOrAddress : (itemOrAddress?.address || itemOrAddress?.vault_id || '');
+  const key = normalizeAddressKey(address);
+  const alias = (state.walletAliases || {})[key];
+  if (alias && String(alias).trim()) return String(alias).trim();
+  if (typeof itemOrAddress === 'object' && itemOrAddress?.source === 'fatbot_vault') return itemOrAddress.label || shortAddress(address);
+  return shortAddress(address);
+}
+
+function renameWalletAlias(address) {
+  const key = normalizeAddressKey(address);
+  if (!key) return;
+  const current = (state.walletAliases || {})[key] || '';
+  const next = window.prompt('Zadaj prezývku pre walletku:', current);
+  if (next === null) return;
+  const clean = String(next || '').trim();
+  if (!state.walletAliases) state.walletAliases = {};
+  if (clean) state.walletAliases[key] = clean;
+  else delete state.walletAliases[key];
+  saveWalletAliases();
+  renderTraders();
+}
+
+
+function externalLinkIconSvg() {
+  return `
+    <svg class="external-link-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M14 5h5v5"></path>
+      <path d="M10 14 19 5"></path>
+      <path d="M19 14v4.5A1.5 1.5 0 0 1 17.5 20h-12A1.5 1.5 0 0 1 4 18.5v-12A1.5 1.5 0 0 1 5.5 5H10"></path>
+    </svg>
+  `;
+}
+
+function hypurrscanAddressUrl(address) {
+  return `https://hypurrscan.io/address/${String(address || '').toLowerCase()}#more`;
+}
+
 
 const $ = (id) => document.getElementById(id);
 function safeClassRemove(id, className) {
@@ -263,7 +340,7 @@ function tokenIconUrl(coin, dex = '') {
     ZEC: 'https://assets.coingecko.com/coins/images/486/large/circle-zcash-color.png',
     MSFT: 'https://assets.coingecko.com/coins/images/0/large/microsoft.png',
   };
-  return icons[c] || '';
+  return icons[c] || (c ? `/api/token-icon/${encodeURIComponent(c)}` : '');
 }
 
 function coinIconHtml(coin, iconUrl = '', dex = '') {
@@ -300,6 +377,7 @@ function ensureUiState() {
   if (!state.closingWallets) state.closingWallets = new Set();
   if (!state.selectedMultiTraders) state.selectedMultiTraders = [];
   if (!state.liveFeedTransactions) state.liveFeedTransactions = [];
+  if (!(state.closedVaults instanceof Set)) state.closedVaults = new Set(Array.isArray(state.closedVaults) ? state.closedVaults : []);
 }
 
 
@@ -308,7 +386,23 @@ function singleSlotLimit() {
 }
 
 function multiSlotLimit() {
-  return state.mainView === 'fatbot-vaults' ? 5 : 5;
+  return state.mainView === 'fatbot-vaults' ? 10 : 10;
+}
+
+function unlockedVaultSlotLimit() {
+  return 3;
+}
+
+function vaultSlotUnlockVolume(slotNumber) {
+  return Math.max(1, Number(slotNumber || 1) - unlockedVaultSlotLimit()) * 100000;
+}
+
+function vaultSlotUnlockAmountLabel(slotNumber) {
+  return `${Math.round(vaultSlotUnlockVolume(slotNumber)).toLocaleString('en-US').replace(/,/g, ' ')} USD`;
+}
+
+function vaultSlotUnlockText(slotNumber) {
+  return `Reach ${vaultSlotUnlockAmountLabel(slotNumber)} Perps volume to unlock this slot.`;
 }
 
 function isCopytradingView() {
@@ -317,6 +411,12 @@ function isCopytradingView() {
 
 function isFatBotVaultsView() {
   return state.mainView === 'fatbot-vaults';
+}
+
+function isFatBotVaultAddMode() {
+  const multiPanel = document.getElementById('multiSectionPanel');
+  const multiVisible = !!multiPanel && multiPanel.style.display !== 'none';
+  return isFatBotVaultsView() || multiVisible || state.copySetupMode === 'multi' || !!state.activeVaultBuilderSlot;
 }
 
 
@@ -395,9 +495,10 @@ function bindLeaderboardCategoryTabs() {
 
 function leaderboardQueryString() {
   const f = state.leaderboardFilters || {};
+  // Leaderboard displayed metrics are intentionally fixed to 30D.
   const params = new URLSearchParams({
-    window: f.window || '30d',
-    sortBy: f.sortBy || 'totalPnl',
+    window: '30d',
+    sortBy: 'totalPnl',
     minTrades: String(f.minTrades ?? 0),
     minDaysActive: String(f.minDaysActive ?? 0),
     limit: String(f.limit ?? 50),
@@ -470,9 +571,18 @@ function bindLeaderboardFilters() {
 }
 
 
+
+function apiWithTimeout(path, timeoutMs = 12000) {
+  return Promise.race([
+    api(path),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Request timeout after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)),
+  ]);
+}
+
 async function loadAll() {
   ensureUiState();
   syncCategoryToMarketFilter();
+  renderTopInfoPanel();
   const q = leaderboardQueryString();
   const errors = [];
 
@@ -541,7 +651,63 @@ async function loadAll() {
     state.fatbotVaults = data || [];
     renderLeaderboardTabs();
     renderTraders();
+    renderCopySections(state.wallets || []);
+    if (state.activeSingleCopyWallet && state.activeSingleCopyWallet.is_model_single_copy) {
+      state.activeSingleCopyWallet = modelSingleCopyWallet();
+      renderSingleCopyModalContent();
+    }
   });
+}
+
+
+function allocationPanelHtml() {
+  return `
+    <div class="panel-head small">
+      <h2>PnL Allocation</h2>
+      <span class="pill">DEMO</span>
+    </div>
+    <div class="donut-wrap">
+      <div class="donut"><span id="allocPct">48%</span></div>
+      <div class="legend">
+        <div><i class="dot purple"></i><span>Single Trader Copy</span><strong id="allocSingle">$0.00</strong></div>
+        <div><i class="dot yellow"></i><span>Multi Copy</span><strong id="allocPool">$0.00</strong></div>
+        <div><i class="dot green"></i><span>Available</span><strong id="allocAvailable">$0.00</strong></div>
+      </div>
+    </div>
+  `;
+}
+
+function fatbotHowItWorksHtml() {
+  const index = Number(state.howItWorksIndex || 0) % FATBOT_HOW_IT_WORKS_STEPS.length;
+  const stepText = FATBOT_HOW_IT_WORKS_STEPS[index];
+  const dots = FATBOT_HOW_IT_WORKS_STEPS.map((_, i) => `<i class="how-it-works-dot ${i === index ? 'active' : ''}"></i>`).join('');
+  return `
+    <div class="panel-head small">
+      <h2>How it Works</h2>
+      <span class="pill">AUTO LOOP</span>
+    </div>
+    <div class="how-it-works-wrap">
+      <div class="how-it-works-line" aria-live="polite">
+        <span class="how-it-works-step">${index + 1}</span>
+        <span class="how-it-works-text">${stepText}</span>
+      </div>
+      <div class="how-it-works-dots">${dots}</div>
+    </div>
+  `;
+}
+
+function renderTopInfoPanel() {
+  const panel = document.getElementById('topInfoPanel');
+  if (!panel) return;
+  panel.innerHTML = state.mainView === 'fatbot-vaults' ? fatbotHowItWorksHtml() : allocationPanelHtml();
+}
+
+function ensureFatbotHowItWorksLoop() {
+  if (fatbotHowItWorksTimer) return;
+  fatbotHowItWorksTimer = setInterval(() => {
+    state.howItWorksIndex = (Number(state.howItWorksIndex || 0) + 1) % FATBOT_HOW_IT_WORKS_STEPS.length;
+    if (state.mainView === 'fatbot-vaults') renderTopInfoPanel();
+  }, 3000);
 }
 
 
@@ -568,6 +734,7 @@ function renderSummary(summary) {
   if ($('allocPool')) $('allocPool').textContent = fmtUsd(multiValue);
   if ($('allocAvailable')) $('allocAvailable').textContent = fmtUsd(available);
   if ($('allocPct')) $('allocPct').textContent = `${pct}%`;
+  if (state.mainView !== 'fatbot-vaults') renderTopInfoPanel();
 }
 
 function copiedTraderAddresses() {
@@ -630,6 +797,11 @@ function renderLeaderboardTabs() {
     btn.classList.toggle('active', btn.dataset.leaderTab === state.activeLeaderTab);
   });
 
+  const fatbotEyebrow = $('fatbotSelectionEyebrow');
+  if (fatbotEyebrow) {
+    fatbotEyebrow.style.display = state.activeLeaderTab === 'fatbot_selection' ? 'inline-flex' : 'none';
+  }
+
   const hint = $('leaderboardHint');
   if (!hint) return;
 
@@ -673,7 +845,7 @@ function pnlSparklineHtml(t) {
 
   const endValue = values[values.length - 1] - values[0];
   const cls = endValue >= 0 ? 'positive' : 'negative';
-  const label = t.pnl_sparkline_window ? `${String(t.pnl_sparkline_window).toUpperCase()} PnL` : '7D PnL';
+  const label = t.pnl_sparkline_window ? `${String(t.pnl_sparkline_window).toUpperCase()} PnL` : '30D PnL';
 
   return `
     <div class="sparkline-wrap ${cls}" title="${label}">
@@ -698,7 +870,7 @@ function renderTraders() {
         : state.activeLeaderTab === 'bear'
           ? 'No Top Bears wallets found. Requires short exposure share > 80%.'
           : state.activeLeaderTab === 'fatbot_selection'
-            ? 'Top FatBot Selection is empty. Manual wallets with no open positions are hidden.'
+            ? 'Top FatBot Selection is empty. Manual wallets with no live open positions are hidden by default.'
             : 'No traders available.';
     const f = state.leaderboardFilters || {};
     const marketMsg = f.marketType && f.marketType !== 'all'
@@ -713,19 +885,24 @@ function renderTraders() {
     const isFav = state.favourites.has(favKey);
     const isVault = t.source === 'fatbot_vault';
     const isLive = isHydro(t) || isVault;
-    const subtitle = t.source === 'fatbot_selection' ? 'FatBot Selection wallet' : (isVault ? 'FatBot multi-copy vault' : (isLive ? 'Hydromancer PnL leaderboard' : t.label));
-    const actionLabel = isVault ? 'Copy Vault' : 'Copy Wallet';
+    const subtitle = t.source === 'fatbot_selection' ? 'FatBot Selection wallet' : (isVault ? 'FatBot multi-copy vault' : (isLive ? 'Hydromancer 30D PnL leaderboard' : t.label));
+    const actionLabel = isFatBotVaultAddMode() && !isVault ? 'Add to vault' : (isVault ? 'Copy Vault' : 'Copy Wallet');
+    const displayName = walletDisplayName(t);
 
     return `
-      <div class="trader-row hydro-trader-row ${isVault ? 'fatbot-vault-row' : ''}" data-address="${t.address}" data-vault-id="${t.vault_id || ''}">
+      <div class="trader-row hydro-trader-row ${isVault ? 'fatbot-vault-row' : ''} ${t.fatbot_selection_last_good_retained ? 'last-good-row' : ''}" data-address="${t.address}" data-vault-id="${t.vault_id || ''}">
         <button class="fav-btn ${isFav ? 'active' : ''}" data-fav="${favKey}" title="Favourite">${isFav ? '★' : '☆'}</button>
         ${leaderLogoHtml(t, i)}
         <div>
-          <div class="row-title">${isVault ? (t.label || shortAddress(t.address)) : shortAddress(t.address)}</div>
+          <div class="row-title wallet-title-line">
+            <span class="wallet-display-name">${displayName}</span>
+            <button class="wallet-icon-btn" data-rename-wallet="${t.address}" title="Rename wallet">✎</button>
+            <a class="wallet-icon-btn wallet-link-btn" data-wallet-link="1" href="${hypurrscanAddressUrl(t.address)}" target="_blank" rel="noopener noreferrer" title="Open on Hypurrscan">${externalLinkIconSvg()}</a>
+          </div>
           <div class="row-sub">${subtitle}</div>
         </div>
         <div>
-          <div class="row-sub">PnL</div>
+          <div class="row-sub">30D PnL</div>
           <strong class="${positiveClass(pnlNumber(t))}">${pnlDisplay(t)}</strong>
         </div>
         <div class="optional-leader-col">
@@ -733,7 +910,7 @@ function renderTraders() {
           <strong>${moneyOrDash(t.account_value)}</strong>
         </div>
         <div class="optional-leader-col">
-          <div class="row-sub">Volume</div>
+          <div class="row-sub">30D Volume</div>
           <strong>${moneyOrDash(t.volume || t.volume_traded || t.volumeTraded)}</strong>
         </div>
         <div class="optional-leader-col">
@@ -741,11 +918,11 @@ function renderTraders() {
           <strong>${grossExposureDisplay(t)}</strong>
         </div>
         <div class="optional-leader-col">
-          <div class="row-sub">Win Rate</div>
+          <div class="row-sub">30D Win Rate</div>
           <strong>${isLive ? winRateDisplay(t) : '—'}</strong>
         </div>
         <div class="sparkline-col">
-          <div class="row-sub">7D PnL</div>
+          <div class="row-sub">PnL Chart</div>
           ${pnlSparklineHtml(t)}
         </div>
         <button class="copy-btn" data-copy="${t.address}" data-vault-copy="${isVault ? '1' : ''}">${actionLabel}</button>
@@ -755,14 +932,27 @@ function renderTraders() {
 
   el.querySelectorAll('.trader-row').forEach(row => {
     row.addEventListener('click', (e) => {
-      if (e.target.dataset.copy || e.target.dataset.fav) return;
+      if (e.target.closest('[data-copy], [data-fav], [data-rename-wallet], [data-wallet-link]')) return;
       openTrader(row.dataset.address);
     });
+  });
+  el.querySelectorAll('[data-rename-wallet]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      renameWalletAlias(btn.dataset.renameWallet);
+    });
+  });
+  el.querySelectorAll('[data-wallet-link]').forEach(link => {
+    link.addEventListener('click', (e) => e.stopPropagation());
   });
   el.querySelectorAll('[data-copy]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openCopyWizard(btn.dataset.copy);
+      if (isFatBotVaultAddMode() && btn.dataset.vaultCopy !== '1') {
+        addTraderToVaultBuilder(btn.dataset.copy);
+      } else {
+        openCopyWizard(btn.dataset.copy);
+      }
     });
   });
   el.querySelectorAll('[data-fav]').forEach(btn => {
@@ -791,10 +981,1115 @@ function copyWalletLogoHtml(mode) {
   `;
 }
 
-function renderCopySections(wallets) {
-  const single = wallets.filter(w => w.mode !== 'pool');
-  const multi = wallets.filter(w => w.mode === 'pool');
 
+const DEFAULT_FATBOT_VAULT_ADDRESS = '0x0baFb25EF191bFe7A2727E14F5BbfC36610EC62A';
+const FATBOT_HOW_IT_WORKS_STEPS = [
+  'Create your own vault — safe and profitable',
+  'Choose up to 10 top traders you want to copy',
+  'Vault will create their average position',
+  'Set safety parameters',
+  'Launch vault — fully automatic & diversified',
+];
+let fatbotHowItWorksTimer = null;
+
+function saveDefaultVaultMembers() {
+  localStorage.setItem('fatbot_default_vault_members', JSON.stringify(state.defaultVaultMembers || []));
+}
+
+function defaultVaultSourceRow() {
+  const target = DEFAULT_FATBOT_VAULT_ADDRESS.toLowerCase();
+  const live =
+    (state.fatbotVaults || []).find(v => String(v.address || '').toLowerCase() === target) ||
+    (state.traders || []).find(v => String(v.address || '').toLowerCase() === target) ||
+    {};
+  return live;
+}
+
+function defaultVaultWallet() {
+  const live = defaultVaultSourceRow();
+  const value = Number(live.account_value || live.value || 0);
+  const pnl = Number(live.total_pnl || live.pnl_usd || live.pnl || 0);
+  return {
+    id: 'default-fatbot-vault',
+    wallet_address: DEFAULT_FATBOT_VAULT_ADDRESS,
+    address: DEFAULT_FATBOT_VAULT_ADDRESS,
+    label: 'My FatBot Vault',
+    mode: 'pool',
+    status: 'active',
+    is_default_vault: true,
+    source: 'fatbot_vault',
+    value,
+    available: Number(live.available || 0),
+    total_pnl: pnl,
+    realized_pnl: Number(live.realized_pnl || 0),
+    unrealized_pnl: Number(live.unrealized_pnl || 0),
+    gross_exposure: Number(live.gross_exposure || 0),
+    net_exposure: Number(live.net_exposure || 0),
+    drift: Number(live.drift || 0),
+    positions: Array.isArray(live.positions) ? live.positions : [],
+    portfolio_chart_points: live.portfolio_chart_points || [],
+    portfolio_chart_window: live.portfolio_chart_window || '30d',
+    pnl_sparkline: live.pnl_sparkline || [],
+    raw_live_row: live,
+  };
+}
+
+function vaultManagementPreviewRow(address) {
+  const key = String(address || '').toLowerCase();
+  return (
+    (state.traders || []).find(t => String(t.address || '').toLowerCase() === key) ||
+    (state.fatbotVaults || []).find(t => String(t.address || '').toLowerCase() === key) ||
+    { address, label: shortAddress(address), source: 'manual_vault_member' }
+  );
+}
+
+
+function ensureDefaultVaultPlaceholderMembers() {
+  if (!Array.isArray(state.defaultVaultMembers)) state.defaultVaultMembers = [];
+  if (state.defaultVaultMembers.length) return;
+
+  const seen = new Set();
+  const picked = [];
+  (state.traders || []).forEach(t => {
+    const addr = String(t.address || '').trim();
+    const key = addr.toLowerCase();
+    if (isValidWallet(addr) && !seen.has(key) && key !== DEFAULT_FATBOT_VAULT_ADDRESS.toLowerCase() && picked.length < 7) {
+      seen.add(key);
+      picked.push(addr);
+    }
+  });
+
+  if (!picked.length) {
+    [
+      '0xf66f7dba8d4837586078f4fdcdc29804337ca06',
+      '0x32008fcf66bbd10532afc83ca8b6c920dae22c407',
+      '0xb83de012dba672c76a7dbbbf3e459cb59d7d6e36',
+      '0x17c3c80a86654ab6f48c7e17f8d7b8d2e84a8686',
+      '0x57ae9ad8212ce7edfdc1e5adcb9cf8d0a8405fd2',
+      '0x2808fc407e0a702870378e8990bd005bd3b89fac',
+      '0x8bafa7f004264f93e9bc43247786183f6a7fa05'
+    ].forEach(addr => picked.push(addr));
+  }
+
+  state.defaultVaultMembers = picked.slice(0, 7);
+  saveDefaultVaultMembers();
+}
+
+
+
+function saveVaultMemberOverrides() {
+  localStorage.setItem('fatbot_vault_member_overrides', JSON.stringify(state.vaultMemberOverrides || {}));
+}
+
+function saveClosedVaults() {
+  ensureUiState();
+  localStorage.setItem('fatbot_closed_vaults', JSON.stringify([...(state.closedVaults || new Set())]));
+}
+
+function closedVaultKey(wallet) {
+  if (!wallet) return '';
+  if (wallet.is_default_vault) return 'default-fatbot-vault';
+  return String(wallet.id || wallet.wallet_address || wallet.address || wallet.label || '').toLowerCase();
+}
+
+function isVaultClosed(wallet) {
+  ensureUiState();
+  return state.closedVaults.has(closedVaultKey(wallet));
+}
+
+function isRemovedPresetVault(wallet) {
+  // v167: never hide by label.
+  // New user-created vaults can legitimately be named FatBot Vault #2 / #3.
+  return false;
+}
+
+function activeVaultModalWallet() {
+  return _activeVaultModalWallet || defaultVaultWallet();
+}
+
+function vaultMembersStorageKey(wallet) {
+  const raw = wallet?.is_default_vault
+    ? `default:${DEFAULT_FATBOT_VAULT_ADDRESS}`
+    : (wallet?.wallet_address || wallet?.address || wallet?.id || wallet?.label || 'vault');
+  return String(raw).toLowerCase();
+}
+
+function genericVaultPlaceholderMembers(limit = 7) {
+  const seen = new Set();
+  const picked = [];
+  (state.traders || []).forEach(t => {
+    const addr = String(t.address || '').trim();
+    const key = addr.toLowerCase();
+    if (isValidWallet(addr) && !seen.has(key) && key !== DEFAULT_FATBOT_VAULT_ADDRESS.toLowerCase() && picked.length < limit) {
+      seen.add(key);
+      picked.push(addr);
+    }
+  });
+  return picked;
+}
+
+function poolForWallet(wallet) {
+  const poolId = Number(wallet?.pool_id || 0);
+  return (state.pools || []).find(p => Number(p.id || 0) === poolId) || null;
+}
+
+function getVaultModalMembers(wallet) {
+  const target = wallet || activeVaultModalWallet();
+  if (!target) return [];
+
+  const key = vaultMembersStorageKey(target);
+  const overrides = state.vaultMemberOverrides || {};
+  if (Array.isArray(overrides[key]) && overrides[key].length) {
+    return overrides[key].slice(0, 10);
+  }
+
+  if (target.is_default_vault) {
+    ensureDefaultVaultPlaceholderMembers();
+    return (state.defaultVaultMembers || []).slice(0, 10);
+  }
+
+  const pool = poolForWallet(target);
+  const memberAddresses = Array.isArray(pool?.members)
+    ? pool.members.map(m => String(m.trader_address || '').trim()).filter(Boolean)
+    : [];
+  const unique = [];
+  const seen = new Set();
+  memberAddresses.forEach(addr => {
+    const key = addr.toLowerCase();
+    if (isValidWallet(addr) && !seen.has(key)) {
+      seen.add(key);
+      unique.push(addr);
+    }
+  });
+  if (unique.length) return unique.slice(0, 10);
+
+  return genericVaultPlaceholderMembers(7).slice(0, 10);
+}
+
+function setVaultModalMembers(wallet, members) {
+  const target = wallet || activeVaultModalWallet();
+  if (!target) return;
+
+  const cleaned = [];
+  const seen = new Set();
+  (Array.isArray(members) ? members : []).forEach(addr => {
+    const value = String(addr || '').trim();
+    const key = value.toLowerCase();
+    if (isValidWallet(value) && !seen.has(key) && cleaned.length < 10) {
+      seen.add(key);
+      cleaned.push(value);
+    }
+  });
+
+  if (target.is_default_vault) {
+    state.defaultVaultMembers = cleaned;
+    saveDefaultVaultMembers();
+  }
+
+  const key = vaultMembersStorageKey(target);
+  if (!state.vaultMemberOverrides) state.vaultMemberOverrides = {};
+  state.vaultMemberOverrides[key] = cleaned;
+  saveVaultMemberOverrides();
+}
+
+function vaultSourceLookup(address) {
+  const key = String(address || '').toLowerCase();
+  if (!key || !key.startsWith('0x')) return null;
+  return (
+    (state.fatbotVaults || []).find(v => String(v.address || '').toLowerCase() === key) ||
+    (state.traders || []).find(v => String(v.address || '').toLowerCase() === key) ||
+    null
+  );
+}
+
+function fallbackWalletSparkline(wallet, points = 16) {
+  const key = String(wallet?.wallet_address || wallet?.address || wallet?.label || wallet?.id || 'vault');
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) hash = ((hash << 5) - hash) + key.charCodeAt(i);
+  const amplitude = Math.max(Math.abs(Number(wallet?.total_pnl || 0)) * 0.08, Math.abs(Number(wallet?.value || 0)) * 0.015, 18);
+  const start = Number(wallet?.total_pnl || 0) - amplitude * 0.6;
+  const out = [];
+  for (let i = 0; i < points; i += 1) {
+    const wave = Math.sin((i / Math.max(points - 1, 1)) * Math.PI * 1.9 + (Math.abs(hash) % 13) / 6) * amplitude * 0.35;
+    const drift = (i / Math.max(points - 1, 1)) * amplitude * 0.55;
+    const noise = (((hash >> (i % 8)) & 7) - 3) * amplitude * 0.03;
+    out.push(Number((start + wave + drift + noise).toFixed(2)));
+  }
+  return out;
+}
+
+function resolveVaultWalletSparkline(wallet, preferredWindow = '7d') {
+  const target = wallet || activeVaultModalWallet() || {};
+  if (Array.isArray(target.pnl_sparkline) && target.pnl_sparkline.length > 1) {
+    return {
+      values: target.pnl_sparkline.map(Number).filter(Number.isFinite),
+      window: target.pnl_sparkline_window || preferredWindow,
+      source: 'wallet_row',
+    };
+  }
+
+  if (target.is_default_vault) {
+    const live = defaultVaultSourceRow();
+    if (Array.isArray(live?.pnl_sparkline) && live.pnl_sparkline.length > 1) {
+      return {
+        values: live.pnl_sparkline.map(Number).filter(Number.isFinite),
+        window: live.pnl_sparkline_window || preferredWindow,
+        source: 'default_vault_live_row',
+      };
+    }
+  }
+
+  const sourceCandidates = [
+    vaultSourceLookup(target.wallet_address || target.address),
+    vaultSourceLookup(target.copied_trader_address),
+  ];
+  const pool = poolForWallet(target);
+  (pool?.members || []).forEach(member => {
+    const row = vaultSourceLookup(member.trader_address);
+    if (row) sourceCandidates.push(row);
+  });
+
+  const source = sourceCandidates.find(item => Array.isArray(item?.pnl_sparkline) && item.pnl_sparkline.length > 1);
+  if (source) {
+    return {
+      values: source.pnl_sparkline.map(Number).filter(Number.isFinite),
+      window: source.pnl_sparkline_window || preferredWindow,
+      source: source.source || 'source_row',
+    };
+  }
+
+  return {
+    values: fallbackWalletSparkline(target),
+    window: preferredWindow,
+    source: 'frontend_fallback_wallet_sparkline',
+  };
+}
+
+function sparklinePointsToPortfolio(values, accountValue = 0) {
+  const safeAccountValue = Math.max(Number(accountValue || 0), 1);
+  return values.map((value, idx) => ({
+    ts: idx,
+    pnl_usd: Number(value),
+    account_value: safeAccountValue,
+    pnl_equity_pct: (Number(value) / safeAccountValue) * 100,
+  }));
+}
+
+function walletAgeDays(activatedAt) {
+  if (!activatedAt) return 0;
+  const ts = new Date(activatedAt).getTime();
+  if (!Number.isFinite(ts)) return 0;
+  return Math.max(0, Math.floor((Date.now() - ts) / 86400000));
+}
+
+function buildVaultModalProfile(wallet) {
+  const target = wallet || activeVaultModalWallet() || {};
+  const live = target.is_default_vault ? defaultVaultSourceRow() : {};
+  const pool = poolForWallet(target);
+  const spark = resolveVaultWalletSparkline(target, '7d');
+  const positions = Array.isArray(target.positions) && target.positions.length
+    ? target.positions
+    : (Array.isArray(live?.positions) ? live.positions : []);
+
+  let longNotional = 0;
+  let shortNotional = 0;
+  let positivePnLCount = 0;
+  positions.forEach(p => {
+    const notional = Math.abs(Number(p.actual_notional || p.target_notional || p.notional || 0));
+    if (String(p.side || '').toLowerCase().includes('short')) shortNotional += notional;
+    else longNotional += notional;
+    if (Number(p.pnl || 0) > 0) positivePnLCount += 1;
+  });
+  const totalNotional = longNotional + shortNotional;
+  const longPct = totalNotional ? (longNotional / totalNotional) * 100 : Number(live?.long_exposure_share_pct || 0);
+  const shortPct = totalNotional ? (shortNotional / totalNotional) * 100 : Number(live?.short_exposure_share_pct || 0);
+  const volumeFromPositions = positions.reduce((sum, p) => sum + Math.abs(Number(p.actual_notional || p.target_notional || 0)), 0);
+
+  const merged = {
+    ...live,
+    ...target,
+    address: target.address || target.wallet_address || live?.address || DEFAULT_FATBOT_VAULT_ADDRESS,
+    wallet_address: target.wallet_address || target.address || live?.address || DEFAULT_FATBOT_VAULT_ADDRESS,
+    label: target.label || live?.label || 'FatBot Vault',
+    source: 'fatbot_vault',
+    account_value: Number(target.value ?? target.account_value ?? live?.account_value ?? live?.value ?? 0),
+    available: Number(target.available ?? live?.available ?? 0),
+    total_pnl: Number(target.total_pnl ?? live?.total_pnl ?? live?.pnl_30d ?? live?.pnl_usd ?? 0),
+    realized_pnl: Number(target.realized_pnl ?? live?.realized_pnl ?? 0),
+    unrealized_pnl: Number(target.unrealized_pnl ?? live?.unrealized_pnl ?? 0),
+    gross_exposure: Number(target.gross_exposure ?? live?.gross_exposure ?? 0),
+    long_exposure_share_pct: longPct,
+    short_exposure_share_pct: shortPct,
+    win_rate: Number(live?.win_rate ?? target.win_rate ?? (positions.length ? (positivePnLCount / positions.length) * 100 : 0)),
+    total_trades: Number(live?.total_trades ?? target.total_trades ?? positions.length),
+    volume: Number(live?.volume ?? target.volume ?? volumeFromPositions),
+    account_age_days: Number(live?.account_age_days ?? target.account_age_days ?? walletAgeDays(target.activated_at)),
+    open_positions: positions.length,
+    positions,
+    pool_member_count: Array.isArray(pool?.members) ? pool.members.length : 0,
+    pnl_sparkline: spark.values,
+    pnl_sparkline_window: spark.window,
+    portfolio_chart_points: (Array.isArray(live?.portfolio_chart_points) && live.portfolio_chart_points.length)
+      ? live.portfolio_chart_points
+      : sparklinePointsToPortfolio(spark.values, Number(target.value ?? target.account_value ?? live?.account_value ?? 0)),
+    portfolio_chart_window: (Array.isArray(live?.portfolio_chart_points) && live.portfolio_chart_points.length)
+      ? (live.portfolio_chart_window || spark.window || '30d')
+      : (spark.window || '7d'),
+    portfolio_chart_source: live?.portfolio_chart_source || spark.source,
+    vault_modal_source: spark.source,
+  };
+  return merged;
+}
+
+function vaultMiniChartHtml(wallet) {
+  const spark = resolveVaultWalletSparkline(wallet, '7d');
+  return pnlSparklineHtml({ pnl_sparkline: spark.values, pnl_sparkline_window: spark.window || '7d' });
+}
+
+function defaultVaultManagementHtml() {
+  const wallet = activeVaultModalWallet();
+  const members = getVaultModalMembers(wallet);
+
+  const rows = members.length ? members.map((address, idx) => {
+    const t = vaultManagementPreviewRow(address);
+    return `
+      <div class="vault-management-row">
+        ${leaderLogoHtml(t, idx)}
+        <div class="vault-management-main">
+          <div class="row-title wallet-title-line">
+            <span class="wallet-display-name">${walletDisplayName(t)}</span>
+            <a class="wallet-icon-btn wallet-link-btn" data-wallet-link="1" href="${hypurrscanAddressUrl(address)}" target="_blank" rel="noopener noreferrer" title="Open on Hypurrscan">${externalLinkIconSvg()}</a>
+          </div>
+          <div class="row-sub">${shortAddress(address)}</div>
+        </div>
+        <div><div class="row-sub">30D PnL</div><strong class="${positiveClass(pnlNumber(t))}">${pnlDisplay(t)}</strong></div>
+        <div><div class="row-sub">Value</div><strong>${moneyOrDash(t.account_value)}</strong></div>
+        <div><div class="row-sub">Exposure</div><strong>${grossExposureDisplay(t)}</strong></div>
+        <div class="vault-management-chart">
+          <div class="row-sub">30D Chart</div>
+          ${pnlSparklineHtml(t)}
+        </div>
+        <button class="vault-trash-btn" type="button" data-remove-default-vault-member="${idx}" title="Remove trader">🗑</button>
+      </div>
+    `;
+  }).join('') : `
+    <div class="empty-state compact-empty">No wallet members saved yet. Add wallets from leaderboard or paste a manual address below.</div>
+  `;
+
+  return `
+    <div class="vault-management-panel">
+      <div class="vault-management-list">${rows}</div>
+      <div class="vault-management-add">
+        <input id="defaultVaultAddInput" class="form-input" placeholder="Paste wallet address 0x..." />
+        <button class="secondary" type="button" id="defaultVaultAddBtn">Add wallet</button>
+      </div>
+      <div class="vault-management-actions">
+        <button class="danger-outline-btn" type="button" id="defaultVaultCloseBtn">Close Vault</button>
+        <button class="primary" type="button" id="defaultVaultSaveBtn">Save settings</button>
+      </div>
+      ${closeVaultDialogHtml()}
+    </div>
+  `;
+}
+
+
+function closeVaultDialogHtml() {
+  if (!state.closeVaultDialogOpen) return '';
+  const wallet = activeVaultModalWallet();
+  const label = wallet?.label || 'FatBot Vault';
+  return `
+    <div class="vault-close-dialog-backdrop" data-close-vault-dialog-backdrop="1">
+      <div class="vault-close-dialog" role="dialog" aria-modal="true" aria-label="Close Vault">
+        <div class="vault-close-dialog-head">
+          <div>
+            <span class="pill danger-pill">CLOSE VAULT</span>
+            <h3>Close ${label}</h3>
+            <p class="muted">Insert wallet address where funds should be withdrawn. Then confirm vault close.</p>
+          </div>
+          <button class="wallet-icon-btn" type="button" data-close-vault-dialog-cancel="1">×</button>
+        </div>
+        <label class="form-label">Withdraw funds to wallet</label>
+        <input id="closeVaultWithdrawInput" class="form-input" placeholder="Destination wallet 0x..." value="${state.closeVaultWithdrawAddress || ''}" />
+        <div class="vault-close-warning ${state.closeVaultConfirmArmed ? 'armed' : ''}">
+          ${state.closeVaultConfirmArmed
+            ? 'Final confirmation required. Click Confirm Close Vault to close this vault and remove it from My Vaults.'
+            : 'This will remove the vault from your My Vaults portfolio and leave the slot empty.'}
+        </div>
+        <div class="vault-close-actions">
+          <button class="secondary" type="button" data-close-vault-dialog-cancel="1">Cancel</button>
+          <button class="danger-btn" type="button" id="confirmCloseVaultBtn">${state.closeVaultConfirmArmed ? 'Confirm Close Vault' : 'Close Vault'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openCloseVaultDialog() {
+  state.closeVaultDialogOpen = true;
+  state.closeVaultWithdrawAddress = '';
+  state.closeVaultConfirmArmed = false;
+  renderDefaultVaultModalContent();
+  setTimeout(() => {
+    const input = document.getElementById('closeVaultWithdrawInput');
+    if (input) input.focus();
+  }, 0);
+}
+
+function closeCloseVaultDialog() {
+  state.closeVaultDialogOpen = false;
+  state.closeVaultWithdrawAddress = '';
+  state.closeVaultConfirmArmed = false;
+  renderDefaultVaultModalContent();
+}
+
+function confirmCloseVaultFromDialog() {
+  const input = document.getElementById('closeVaultWithdrawInput');
+  const value = String(input?.value || '').trim();
+  if (!isValidWallet(value)) {
+    alert('Enter a valid wallet address starting with 0x.');
+    if (input) input.focus();
+    return;
+  }
+
+  if (!state.closeVaultConfirmArmed) {
+    state.closeVaultWithdrawAddress = value;
+    state.closeVaultConfirmArmed = true;
+    renderDefaultVaultModalContent();
+    setTimeout(() => {
+      const confirmBtn = document.getElementById('confirmCloseVaultBtn');
+      if (confirmBtn) confirmBtn.focus();
+    }, 0);
+    return;
+  }
+
+  const currentVault = activeVaultModalWallet();
+  const key = closedVaultKey(currentVault);
+  if (key) {
+    ensureUiState();
+    state.closedVaults.add(key);
+    saveClosedVaults();
+  }
+
+  if (currentVault && currentVault.id) {
+    state.wallets = (state.wallets || []).filter(w => String(w.id) !== String(currentVault.id));
+  }
+
+  state.closeVaultDialogOpen = false;
+  state.closeVaultWithdrawAddress = '';
+  state.closeVaultConfirmArmed = false;
+  clearDefaultVaultModalSizing();
+  closeModal('traderModal');
+  renderCopySections(state.wallets || []);
+  renderMultiLeaderboard(state.pools || [], state.wallets || []);
+}
+
+function bindCloseVaultDialog() {
+  document.querySelectorAll('[data-close-vault-dialog-cancel], [data-close-vault-dialog-backdrop]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target !== el && el.dataset.closeVaultDialogBackdrop) return;
+      closeCloseVaultDialog();
+    });
+  });
+
+  const input = document.getElementById('closeVaultWithdrawInput');
+  if (input) {
+    input.addEventListener('input', () => {
+      state.closeVaultWithdrawAddress = input.value.trim();
+      if (state.closeVaultConfirmArmed) {
+        state.closeVaultConfirmArmed = false;
+        renderDefaultVaultModalContent();
+      }
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') confirmCloseVaultFromDialog();
+      if (e.key === 'Escape') closeCloseVaultDialog();
+    });
+  }
+
+  const confirmBtn = document.getElementById('confirmCloseVaultBtn');
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', confirmCloseVaultFromDialog);
+  }
+}
+
+
+function bindDefaultVaultManagement() {
+  const wallet = activeVaultModalWallet();
+  document.querySelectorAll('[data-wallet-link]').forEach(link => {
+    link.addEventListener('click', (e) => e.stopPropagation());
+  });
+
+  document.querySelectorAll('[data-remove-default-vault-member]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.dataset.removeDefaultVaultMember || 0);
+      const members = getVaultModalMembers(wallet);
+      const address = members[idx];
+      const ok = confirm(`Remove ${shortAddress(address)} from this vault?`);
+      if (!ok) return;
+      members.splice(idx, 1);
+      setVaultModalMembers(wallet, members);
+      renderDefaultVaultModalContent();
+    });
+  });
+
+  const addBtn = document.getElementById('defaultVaultAddBtn');
+  const input = document.getElementById('defaultVaultAddInput');
+  if (addBtn && input) {
+    addBtn.addEventListener('click', () => {
+      const value = input.value.trim();
+      if (!isValidWallet(value)) {
+        alert('Enter a valid wallet address starting with 0x.');
+        return;
+      }
+      const members = getVaultModalMembers(wallet);
+      if (!members.some(x => String(x).toLowerCase() === value.toLowerCase())) {
+        members.push(value);
+      }
+      setVaultModalMembers(wallet, members);
+      renderDefaultVaultModalContent();
+    });
+  }
+
+  const saveBtn = document.getElementById('defaultVaultSaveBtn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
+      setVaultModalMembers(wallet, getVaultModalMembers(wallet));
+      alert('Vault settings saved.');
+    });
+  }
+
+  const closeVaultBtn = document.getElementById('defaultVaultCloseBtn');
+  if (closeVaultBtn) {
+    closeVaultBtn.addEventListener('click', openCloseVaultDialog);
+  }
+
+  bindCloseVaultDialog();
+}
+
+
+function livePositionRowHtml(p) {
+  const coin = p.coin || p.symbol || '?';
+  const side = p.side || '';
+  const notional = Number(p.notional || p.target_notional || p.actual_notional || 0);
+  const entry = p.entry || p.entry_px || p.entryPrice || p.entry_price;
+  const mark = p.mark || p.live_price || p.markPx || p.mid || p.price;
+  const pnl = Number(p.pnl || p.unrealized_pnl || 0);
+  const liq = p.liq_price || p.liquidation_price || p.liquidationPx || p.liq || '—';
+  return `
+    <div class="position-row profile-position-row">
+      ${coinIconHtml(coin, p.icon_url || tokenIconUrl(coin, p.dex), p.dex)}
+      <div><div class="row-title coin-side ${sideClass(side)}">${displayCoinLabel(coin)}</div><div class="row-sub">${side}</div></div>
+      <div><div class="row-sub">Notional</div><strong>${fmtUsd(notional)}</strong></div>
+      <div><div class="row-sub">Entry</div><strong>${entry || '—'}</strong></div>
+      <div><div class="row-sub">Live Price</div><strong>${fmtLivePrice(mark)}</strong></div>
+      <div><div class="row-sub">PnL</div><strong class="${positiveClass(pnl)}">${fmtUsd(pnl)}</strong></div>
+      <div><div class="row-sub">Liq</div><strong>${fmtLivePrice(liq)}</strong></div>
+    </div>
+  `;
+}
+
+function defaultVaultStatsHtml(vaultProfile) {
+  const trader = vaultProfile || defaultVaultSourceRow() || {};
+  trader.address = trader.address || DEFAULT_FATBOT_VAULT_ADDRESS;
+  trader.source = trader.source || 'fatbot_vault';
+
+  if ((!Array.isArray(trader.portfolio_chart_points) || !trader.portfolio_chart_points.length) && Array.isArray(trader.pnl_sparkline) && trader.pnl_sparkline.length) {
+    trader.portfolio_chart_points = trader.pnl_sparkline.map((value, idx) => ({
+      ts: idx,
+      pnl_usd: Number(value),
+      account_value: Number(trader.account_value || 0),
+      pnl_equity_pct: Number(trader.account_value || 0) ? Number(value) / Number(trader.account_value || 1) * 100 : 0,
+    }));
+    trader.portfolio_chart_window = trader.pnl_sparkline_window || '30d';
+    trader.portfolio_chart_source = trader.pnl_sparkline_source || 'leaderboard_pnl_sparkline_fallback';
+  }
+
+  const positions = Array.isArray(trader.positions) ? trader.positions : [];
+
+  const cards = `
+    <div class="vault-stats-grid-3x3">
+      <div class="detail-card"><span>PnL Window (30D)</span><strong class="${positiveClass(pnlUsdValue(trader))}">${fmtUsd(pnlUsdValue(trader))}</strong></div>
+      <div class="detail-card"><span>Account Value</span><strong>${moneyOrDash(trader.account_value)}</strong></div>
+      <div class="detail-card"><span>Long / Short</span><strong>${exposureShareDisplay(trader)}</strong></div>
+      <div class="detail-card"><span>Gross Exposure</span><strong>${grossExposureDisplay(trader)}</strong></div>
+      <div class="detail-card"><span>30D Win Rate</span><strong>${winRateDisplay(trader)}</strong></div>
+      <div class="detail-card"><span>30D Trades</span><strong>${Number(trader.total_trades || trader.trades || 0).toLocaleString()}</strong></div>
+      <div class="detail-card"><span>Account Age</span><strong>${Number(trader.account_age_days || 0)} days</strong></div>
+      <div class="detail-card"><span>30D Volume</span><strong>${moneyOrDash(trader.volume || trader.volume_traded || trader.volumeTraded)}</strong></div>
+      <div class="detail-card"><span>Live Positions</span><strong>${positions.length || Number(trader.open_positions || 0) || 0}</strong></div>
+    </div>
+  `;
+
+  const posRows = positions.length ? `
+    <h3 class="positions-heading">Live Hyperliquid positions</h3>
+    <div class="positions-list">
+      ${positions.map(p => livePositionRowHtml(p)).join('')}
+    </div>
+  ` : `<div class="empty-state compact-empty">No live positions returned for this vault yet.</div>`;
+
+  const warning = trader.profile_warning ? `<div class="empty-state compact-empty vault-live-warning">${trader.profile_warning}</div>` : '';
+  const chartHtml = profileChartsHtml(trader) || `<div class="profile-chart-section profile-chart-section-top"><div class="profile-chart-single-card"><div class="profile-chart-empty">30D vault chart is loading from Hyperliquid portfolio data...</div></div></div>`;
+  return `
+    ${warning}
+    ${chartHtml}
+    ${cards}
+    ${posRows}
+  `;
+}
+
+let _activeDefaultVaultProfile = null;
+let _activeVaultModalWallet = null;
+
+async function openDefaultVaultModal(wallet) {
+  state.defaultVaultModalTab = 'stats';
+  state.closeVaultDialogOpen = false;
+  state.closeVaultWithdrawAddress = '';
+  state.closeVaultConfirmArmed = false;
+  _activeVaultModalWallet = wallet || defaultVaultWallet();
+  _activeDefaultVaultProfile = buildVaultModalProfile(_activeVaultModalWallet);
+  const el = document.getElementById('traderModalContent');
+  const traderModalCard = document.querySelector('#traderModal .modal-card');
+  if (traderModalCard) traderModalCard.classList.add('default-vault-modal-card');
+
+  const headerWallet = _activeVaultModalWallet || {};
+  const headerAddress = headerWallet.address || headerWallet.wallet_address || DEFAULT_FATBOT_VAULT_ADDRESS;
+
+  el.innerHTML = `
+    <button class="profile-back-btn" data-profile-back="1" title="Back">←</button>
+    <div class="wizard-head trader-profile-head with-back-button vault-modal-head">
+      <div>
+        <span class="pill">FATBOT VAULT</span>
+        <div style="display:flex; align-items:center; gap:12px; margin-top:10px;">
+          ${copyWalletLogoHtml('pool')}
+          <div>
+            <h2 style="margin:0;">${headerWallet?.label || 'FatBot Vault'}</h2>
+            <p class="muted" style="margin:4px 0 0;">${shortAddress(headerAddress)}</p>
+          </div>
+        </div>
+      </div>
+      <div class="vault-modal-tabs">
+        <button class="vault-modal-tab active" data-default-vault-tab="stats">VAULT STATS</button>
+        <button class="vault-modal-tab" data-default-vault-tab="management">WALLET MANAGEMENT</button>
+      </div>
+    </div>
+    <div id="defaultVaultModalBody"></div>
+  `;
+
+  el.querySelector('[data-profile-back]').addEventListener('click', () => { clearDefaultVaultModalSizing(); closeModal('traderModal'); });
+  bindDefaultVaultTabs();
+  openModal('traderModal');
+  renderDefaultVaultModalContent();
+}
+
+function clearDefaultVaultModalSizing() {
+  state.closeVaultDialogOpen = false;
+  state.closeVaultWithdrawAddress = '';
+  state.closeVaultConfirmArmed = false;
+  const traderModalCard = document.querySelector('#traderModal .modal-card');
+  if (traderModalCard) traderModalCard.classList.remove('default-vault-modal-card');
+}
+
+function bindDefaultVaultTabs() {
+  document.querySelectorAll('[data-default-vault-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.defaultVaultModalTab = btn.dataset.defaultVaultTab === 'management' ? 'management' : 'stats';
+      renderDefaultVaultModalContent();
+    });
+  });
+}
+
+function renderDefaultVaultModalContent() {
+  const body = document.getElementById('defaultVaultModalBody');
+  if (!body) return;
+
+  try {
+    document.querySelectorAll('[data-default-vault-tab]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.defaultVaultTab === state.defaultVaultModalTab);
+    });
+
+    if (state.defaultVaultModalTab === 'management') {
+      body.innerHTML = defaultVaultManagementHtml();
+      bindDefaultVaultManagement();
+    } else {
+      const trader = buildVaultModalProfile(activeVaultModalWallet());
+      _activeDefaultVaultProfile = trader;
+      body.innerHTML = defaultVaultStatsHtml(trader);
+      bindProfileChartToggle(trader);
+    }
+  } catch (err) {
+    console.error('default vault modal render failed', err);
+    const trader = _activeDefaultVaultProfile || buildVaultModalProfile(activeVaultModalWallet()) || defaultVaultSourceRow() || {};
+    const positions = Array.isArray(trader.positions) ? trader.positions : [];
+    body.innerHTML = `
+      <div class="empty-state compact-empty vault-live-warning">
+        Vault UI fallback rendered because a profile widget failed: ${err.message || err}
+      </div>
+      <div class="vault-stats-grid-3x3">
+        <div class="detail-card"><span>30D PnL</span><strong class="${positiveClass(pnlUsdValue(trader))}">${fmtUsd(pnlUsdValue(trader))}</strong></div>
+        <div class="detail-card"><span>Account Value</span><strong>${moneyOrDash(trader.account_value)}</strong></div>
+        <div class="detail-card"><span>Long / Short</span><strong>${exposureShareDisplay(trader)}</strong></div>
+        <div class="detail-card"><span>Gross Exposure</span><strong>${grossExposureDisplay(trader)}</strong></div>
+        <div class="detail-card"><span>30D Win Rate</span><strong>${winRateDisplay(trader)}</strong></div>
+        <div class="detail-card"><span>30D Trades</span><strong>${Number(trader.total_trades || trader.trades || 0).toLocaleString()}</strong></div>
+        <div class="detail-card"><span>Account Age</span><strong>${Number(trader.account_age_days || 0)} days</strong></div>
+        <div class="detail-card"><span>30D Volume</span><strong>${moneyOrDash(trader.volume || trader.volume_traded || trader.volumeTraded)}</strong></div>
+        <div class="detail-card"><span>Live Positions</span><strong>${positions.length || Number(trader.open_positions || 0) || 0}</strong></div>
+      </div>
+    `;
+  }
+}
+
+
+
+function singleCopyPositionsHtml(wallet) {
+  const positions = Array.isArray(wallet?.positions) ? wallet.positions : [];
+  if (!positions.length) {
+    return `<div class="empty-state compact-empty">No open positions yet.</div>`;
+  }
+  return positions.map(p => `
+    <div class="wallet-position-row single-copy-position-row">
+      ${coinIconHtml(p.coin, p.icon_url || tokenIconUrl(p.coin, p.dex), p.dex)}
+      <div><div class="row-title coin-side ${sideClass(p.side)}">${displayCoinLabel(p.coin)}</div><div class="row-sub">${p.side}</div></div>
+      <div><div class="row-sub">Target</div><strong>${fmtUsd(p.target_notional)}</strong></div>
+      <div><div class="row-sub">Actual</div><strong>${fmtUsd(p.actual_notional)}</strong></div>
+      <div><div class="row-sub">Drift</div><strong class="${positiveClass(p.drift_pct)}">${fmtPct(p.drift_pct)}</strong></div>
+      <div><div class="row-sub">PnL</div><strong class="${positiveClass(p.pnl)}">${fmtUsd(p.pnl)}</strong></div>
+    </div>
+  `).join('');
+}
+
+function singleCopyCloseDialogHtml() {
+  if (!state.singleCopyCloseDialogOpen) return '';
+  const wallet = state.activeSingleCopyWallet || {};
+  return `
+    <div class="vault-close-dialog-backdrop" data-single-copy-close-backdrop="1">
+      <div class="vault-close-dialog single-copy-close-dialog" role="dialog" aria-modal="true" aria-label="Close Copytrading">
+        <div class="vault-close-dialog-head">
+          <div>
+            <span class="pill danger-pill">CLOSE COPYTRADING</span>
+            <h3>Close ${wallet.label || 'Copytrading Wallet'}</h3>
+            <p class="muted">Insert wallet address where funds should be withdrawn. Then confirm copytrading close.</p>
+          </div>
+          <button class="wallet-icon-btn" type="button" data-single-copy-close-cancel="1">×</button>
+        </div>
+        <label class="form-label">Withdraw funds to wallet</label>
+        <input id="singleCopyWithdrawInput" class="form-input" placeholder="Destination wallet 0x..." value="${state.singleCopyCloseWithdrawAddress || ''}" />
+        <div class="vault-close-warning ${state.singleCopyCloseConfirmArmed ? 'armed' : ''}">
+          ${state.singleCopyCloseConfirmArmed
+            ? 'Final confirmation required. Click Confirm Close Copytrading to remove this wallet from My Copytrading.'
+            : 'This will close this copytrading wallet, withdraw funds, and remove it from your portfolio preview.'}
+        </div>
+        <div class="vault-close-actions">
+          <button class="secondary" type="button" data-single-copy-close-cancel="1">Cancel</button>
+          <button class="danger-btn" type="button" id="confirmSingleCopyCloseBtn">${state.singleCopyCloseConfirmArmed ? 'Confirm Close Copytrading' : 'Close Copytrading'}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSingleCopyModalContent() {
+  const wallet = state.activeSingleCopyWallet || {};
+  const el = document.getElementById('traderModalContent');
+  if (!el) return;
+
+  el.innerHTML = `
+    <button class="profile-back-btn" data-single-copy-back="1" title="Back">←</button>
+    <div class="wizard-head trader-profile-head with-back-button single-copy-modal-head">
+      <div>
+        <span class="pill">SINGLE COPYTRADING</span>
+        <div class="single-copy-header-row">
+          ${copyWalletLogoHtml('single')}
+          <div>
+            <h2>${wallet.label || 'Copytrading Wallet'}</h2>
+            <p class="muted">${shortAddress(wallet.wallet_address || '')} · Copying ${shortAddress(wallet.copied_trader_address || '')}${wallet.is_model_single_copy ? ' · model preview data' : ''}</p>
+          </div>
+        </div>
+      </div>
+      <button class="danger-outline-btn" type="button" id="openSingleCopyCloseBtn">Close Copytrading</button>
+    </div>
+
+    <div class="detail-grid single-copy-detail-grid">
+      <div class="detail-card"><span>Wallet value</span><strong>${fmtUsd(wallet.value)}</strong></div>
+      <div class="detail-card"><span>Available</span><strong>${fmtUsd(wallet.available)}</strong></div>
+      <div class="detail-card"><span>Realized PnL</span><strong class="${positiveClass(wallet.realized_pnl)}">${fmtUsd(wallet.realized_pnl)}</strong></div>
+      <div class="detail-card"><span>Unrealized PnL</span><strong class="${positiveClass(wallet.unrealized_pnl)}">${fmtUsd(wallet.unrealized_pnl)}</strong></div>
+      <div class="detail-card"><span>Gross Exposure</span><strong>${Number(wallet.gross_exposure || 0).toFixed(2)}x</strong></div>
+      <div class="detail-card"><span>Drift</span><strong>${Number(wallet.drift || 0).toFixed(1)}%</strong></div>
+    </div>
+
+    <h3 class="positions-heading">Open positions</h3>
+    <div class="wallet-position-list single-copy-position-list">
+      ${singleCopyPositionsHtml(wallet)}
+    </div>
+
+    ${singleCopyCloseDialogHtml()}
+  `;
+
+  const backBtn = el.querySelector('[data-single-copy-back]');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      closeSingleCopyModal();
+    });
+  }
+
+  const closeBtn = document.getElementById('openSingleCopyCloseBtn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', openSingleCopyCloseDialog);
+  }
+
+  bindSingleCopyCloseDialog();
+}
+
+function openSingleCopyModal(wallet) {
+  state.activeSingleCopyWallet = wallet || null;
+  state.singleCopyCloseDialogOpen = false;
+  state.singleCopyCloseWithdrawAddress = '';
+  state.singleCopyCloseConfirmArmed = false;
+
+  const card = document.querySelector('#traderModal .modal-card');
+  if (card) {
+    card.classList.remove('default-vault-modal-card');
+    card.classList.add('single-copy-modal-card');
+  }
+
+  renderSingleCopyModalContent();
+  openModal('traderModal');
+
+  if (wallet && wallet.is_model_single_copy) {
+    apiWithTimeout(`/api/fatbot-vaults?${leaderboardQueryString()}`, 18000)
+      .then(rows => {
+        const target = MODEL_SINGLE_COPY_ADDRESS.toLowerCase();
+        const live = (Array.isArray(rows) ? rows : []).find(v => String(v.address || '').toLowerCase() === target);
+        if (live) {
+          state.fatbotVaults = [
+            live,
+            ...(state.fatbotVaults || []).filter(v => String(v.address || '').toLowerCase() !== target)
+          ];
+          state.activeSingleCopyWallet = modelSingleCopyWallet();
+          renderSingleCopyModalContent();
+          renderCopySections(state.wallets || []);
+        }
+      })
+      .catch(err => console.warn('model single live refresh failed', err));
+  }
+}
+
+function closeSingleCopyModal() {
+  state.activeSingleCopyWallet = null;
+  state.singleCopyCloseDialogOpen = false;
+  state.singleCopyCloseWithdrawAddress = '';
+  state.singleCopyCloseConfirmArmed = false;
+
+  const card = document.querySelector('#traderModal .modal-card');
+  if (card) card.classList.remove('single-copy-modal-card');
+
+  closeModal('traderModal');
+}
+
+function openSingleCopyCloseDialog() {
+  state.singleCopyCloseDialogOpen = true;
+  state.singleCopyCloseWithdrawAddress = '';
+  state.singleCopyCloseConfirmArmed = false;
+  renderSingleCopyModalContent();
+  setTimeout(() => {
+    const input = document.getElementById('singleCopyWithdrawInput');
+    if (input) input.focus();
+  }, 0);
+}
+
+function closeSingleCopyCloseDialog() {
+  state.singleCopyCloseDialogOpen = false;
+  state.singleCopyCloseWithdrawAddress = '';
+  state.singleCopyCloseConfirmArmed = false;
+  renderSingleCopyModalContent();
+}
+
+async function confirmSingleCopyCloseFromDialog() {
+  const input = document.getElementById('singleCopyWithdrawInput');
+  const value = String(input?.value || '').trim();
+  if (!isValidWallet(value)) {
+    alert('Enter a valid wallet address starting with 0x.');
+    if (input) input.focus();
+    return;
+  }
+
+  if (!state.singleCopyCloseConfirmArmed) {
+    state.singleCopyCloseWithdrawAddress = value;
+    state.singleCopyCloseConfirmArmed = true;
+    renderSingleCopyModalContent();
+    setTimeout(() => {
+      const confirmBtn = document.getElementById('confirmSingleCopyCloseBtn');
+      if (confirmBtn) confirmBtn.focus();
+    }, 0);
+    return;
+  }
+
+  const wallet = state.activeSingleCopyWallet || {};
+  const id = wallet.id;
+  if (!id) {
+    alert('Missing wallet id.');
+    return;
+  }
+
+  const confirmBtn = document.getElementById('confirmSingleCopyCloseBtn');
+  if (confirmBtn) {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Closing...';
+  }
+
+  try {
+    if (wallet.is_model_single_copy || String(id) === 'model-single-copy-slot') {
+      ensureUiState();
+      state.closedVaults.add('model-single-copy-slot');
+      saveClosedVaults();
+    } else {
+      await api(`/api/wallets/${id}`, { method: 'DELETE' });
+      state.wallets = (state.wallets || []).filter(w => String(w.id) !== String(id));
+    }
+
+    closeSingleCopyModal();
+    renderCopySections(state.wallets || []);
+    renderMultiLeaderboard(state.pools || [], state.wallets || []);
+    if (!(wallet.is_model_single_copy || String(id) === 'model-single-copy-slot')) {
+      await loadAll();
+    }
+  } catch (err) {
+    console.error(err);
+    alert(`Close failed: ${err.message || err}`);
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Confirm Close Copytrading';
+    }
+  }
+}
+
+function bindSingleCopyCloseDialog() {
+  document.querySelectorAll('[data-single-copy-close-cancel], [data-single-copy-close-backdrop]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target !== el && el.dataset.singleCopyCloseBackdrop) return;
+      closeSingleCopyCloseDialog();
+    });
+  });
+
+  const input = document.getElementById('singleCopyWithdrawInput');
+  if (input) {
+    input.addEventListener('input', () => {
+      state.singleCopyCloseWithdrawAddress = input.value.trim();
+      if (state.singleCopyCloseConfirmArmed) {
+        state.singleCopyCloseConfirmArmed = false;
+        renderSingleCopyModalContent();
+      }
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') confirmSingleCopyCloseFromDialog();
+      if (e.key === 'Escape') closeSingleCopyCloseDialog();
+    });
+  }
+
+  const confirmBtn = document.getElementById('confirmSingleCopyCloseBtn');
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', confirmSingleCopyCloseFromDialog);
+  }
+}
+
+
+
+const MODEL_SINGLE_COPY_ADDRESS = '0x0baFb25EF191bFe7A2727E14F5BbfC36610EC62A';
+
+function modelSinglePositionRowsFromSource(source) {
+  const positions = Array.isArray(source?.positions) ? source.positions : [];
+  return positions.map((p, idx) => {
+    const notional = Math.abs(Number(p.actual_notional || p.notional || p.target_notional || 0));
+    const pnl = Number(p.pnl || p.unrealized_pnl || 0);
+    const drift = Number(p.drift_pct || 0);
+    return {
+      id: `model-${idx}`,
+      coin: p.coin || p.symbol || '?',
+      side: p.side || 'Long',
+      target_notional: Number(p.target_notional || notional),
+      actual_notional: Number(p.actual_notional || notional),
+      drift_pct: drift,
+      pnl,
+      pnl_pct: Number(p.pnl_pct || 0),
+      entry: p.entry || p.entry_px || p.entry_price,
+      mark: p.mark || p.live_price || p.display_price,
+      liq_price: p.liq_price || p.liquidation_price || p.liq,
+      icon_url: p.icon_url,
+      dex: p.dex,
+    };
+  });
+}
+
+function modelSingleCopySourceRow() {
+  const target = MODEL_SINGLE_COPY_ADDRESS.toLowerCase();
+  const vaultRow = (state.fatbotVaults || []).find(v => String(v.address || '').toLowerCase() === target);
+  if (vaultRow) return vaultRow;
+
+  const traderRow = (state.traders || []).find(v => String(v.address || '').toLowerCase() === target);
+  if (traderRow) return traderRow;
+
+  const defaultRow = defaultVaultSourceRow();
+  if (defaultRow && String(defaultRow.address || '').toLowerCase() === target) return defaultRow;
+
+  return {};
+}
+
+function modelSingleCopyWallet() {
+  const source = modelSingleCopySourceRow();
+  const accountValue = Number(source.account_value || source.value || 0);
+  const totalPnl = Number(source.total_pnl || source.pnl_usd || source.pnl_30d || 0);
+  const positions = modelSinglePositionRowsFromSource(source);
+  return {
+    id: 'model-single-copy-slot',
+    wallet_address: MODEL_SINGLE_COPY_ADDRESS,
+    copied_trader_address: MODEL_SINGLE_COPY_ADDRESS,
+    label: 'Model Single Copy',
+    mode: 'single',
+    status: 'active',
+    is_model_single_copy: true,
+    value: accountValue,
+    available: Number(source.available || accountValue * 0.38 || 0),
+    total_pnl: totalPnl,
+    realized_pnl: Number(source.realized_pnl || 0),
+    unrealized_pnl: Number(source.unrealized_pnl || totalPnl),
+    gross_exposure: Number(source.gross_exposure || 0),
+    net_exposure: Number(source.net_exposure || 0),
+    drift: Number(source.drift || 0.0),
+    positions,
+    settings: {
+      multiplier: 1,
+      stop_drawdown_pct: -20,
+      max_gross_exposure_pct: 150,
+    },
+    pnl_sparkline: source.pnl_sparkline || [],
+    portfolio_chart_points: source.portfolio_chart_points || [],
+  };
+}
+
+function isModelSingleCopyClosed() {
+  // v171: model preview slot must always be visible for demo/live-output preview.
+  return false;
+}
+
+
+function renderCopySections(wallets) {
+  let single = wallets.filter(w => w.mode !== 'pool');
+  if (isCopytradingView() && !isModelSingleCopyClosed()) {
+    const model = modelSingleCopyWallet();
+    single = [
+      model,
+      ...single.filter(w => String(w.wallet_address || '').toLowerCase() !== MODEL_SINGLE_COPY_ADDRESS.toLowerCase())
+    ];
+  }
+  let multi = visibleVaultWallets(wallets || []);
+  if (isFatBotVaultsView()) {
+    const defaultWallet = defaultVaultWallet();
+    multi = [
+      defaultWallet,
+      ...multi.filter(w => String(w.wallet_address || w.address || '').toLowerCase() !== DEFAULT_FATBOT_VAULT_ADDRESS.toLowerCase())
+    ];
+  }
   const singlePanel = $('singleSectionPanel');
   const multiPanel = $('multiSectionPanel');
 
@@ -814,7 +2109,7 @@ function renderCopySections(wallets) {
   if (multiPanel) multiPanel.style.display = '';
 
   if ($('multiSectionTitle')) $('multiSectionTitle').textContent = 'FatBot Vaults';
-  if ($('multiSectionText')) $('multiSectionText').textContent = 'Create or manage FatBot vault copy indexes. Maximum 5 vaults.';
+  if ($('multiSectionText')) $('multiSectionText').textContent = 'Create or manage FatBot vault copy indexes. First 3 slots unlocked; more slots unlock by Perps volume.';
   if ($('multiLimit')) $('multiLimit').textContent = `${Math.min(multi.length, multiSlotLimit())} / ${multiSlotLimit()}`;
 
   renderWalletSection('multiCopyList', multi, 'multi', multiSlotLimit());
@@ -832,37 +2127,62 @@ function renderWalletSection(elementId, wallets, type, slotLimit = null) {
     const w = wallets[i];
 
     if (w) {
-      const isExpanded = state.expandedWallets.has(String(w.id));
-      const isClosing = state.closingWallets.has(String(w.id));
+      const isExpanded = false;
+      const isClosing = false;
+      const extraMetricCol = type === 'multi'
+        ? `<div class="vault-row-chart-col"><div class="row-sub">7D PnL</div>${vaultMiniChartHtml(w)}</div>`
+        : `<div><div class="row-sub">Drift</div><strong>${Number(w.drift || 0).toFixed(1)}%</strong></div>`;
+      const statusCol = type === 'multi' ? statusPulseDotHtml(w.status) : `<div class="status-badge ${w.status}">${String(w.status || '').toUpperCase()}</div>`;
       rows.push(`
         <div class="wallet-slot-wrap">
-          <div class="wallet-row compact-wallet fixed-slot filled-slot" data-wallet-id="${w.id}">
+          <div class="wallet-row compact-wallet fixed-slot filled-slot ${type === 'multi' ? 'vault-wallet-row' : ''} ${w.is_default_vault ? 'default-fatbot-vault-row' : ''} ${w.is_model_single_copy ? 'model-single-copy-row' : ''}" data-wallet-id="${w.id}" data-wallet-mode="${w.mode}" data-default-vault="${w.is_default_vault ? '1' : ''}">
             <div class="slot-index">${i + 1}</div>
             ${copyWalletLogoHtml(w.mode)}
             <div>
               <div class="row-title">${w.label}</div>
-              <div class="row-sub">${w.mode === 'pool' ? 'Multi copy wallet' : `Copying: ${String(w.copied_trader_address || '').startsWith('vault:') ? 'Multi Vault' : shortAddress(w.copied_trader_address || 'Not selected')}`}</div>
+              <div class="row-sub">${w.is_default_vault ? shortAddress(DEFAULT_FATBOT_VAULT_ADDRESS) : (w.mode === 'pool' ? 'Multi copy wallet' : `Copying: ${String(w.copied_trader_address || '').startsWith('vault:') ? 'Multi Vault' : shortAddress(w.copied_trader_address || 'Not selected')}`)}</div>
               <div class="progress"><i style="width:${Math.min(100, 35 + Number(w.gross_exposure || 0) * 25)}%"></i></div>
             </div>
             <div><div class="row-sub">Value</div><strong>${fmtUsd(w.value)}</strong></div>
             <div><div class="row-sub">Total PnL</div><strong class="${positiveClass(w.total_pnl)}">${fmtUsd(w.total_pnl)}</strong></div>
             <div><div class="row-sub">Exposure</div><strong>${Number(w.gross_exposure || 0).toFixed(2)}x</strong></div>
-            <div><div class="row-sub">Drift</div><strong>${Number(w.drift || 0).toFixed(1)}%</strong></div>
-            <div class="status-badge ${w.status}">${String(w.status || '').toUpperCase()}</div>
+            ${extraMetricCol}
+            ${statusCol}
           </div>
-          ${isExpanded ? walletExpandedPanel(w, isClosing) : ''}
+          ${type === 'single' && isExpanded ? walletExpandedPanel(w, isClosing) : ''}
         </div>
       `);
     } else {
+      const slotNumber = i + 1;
+      const lockedVaultSlot = type === 'multi' && slotNumber > unlockedVaultSlotLimit();
       const label = type === 'single' ? 'Start Single Copytrading' : 'Start FatBot Vault';
-      rows.push(`
-        <button class="start-copy-card slot-card" data-start-copy="${type}" data-slot="${i + 1}">
-          <span class="slot-index">${i + 1}</span>
-          ${copyWalletLogoHtml(type === 'multi' ? 'pool' : 'single')}
-          <span class="plus-mark">+</span>
-          <strong>${label}</strong>
-        </button>
-      `);
+      if (lockedVaultSlot) {
+        rows.push(`
+          <div class="start-copy-card slot-card locked-vault-slot" data-locked-vault-slot="${slotNumber}" aria-disabled="true">
+            <div class="locked-vault-blur-bg"></div>
+            <div class="locked-vault-content">
+              <span class="slot-index">${slotNumber}</span>
+              <span class="locked-vault-lock">🔒</span>
+              <div class="locked-vault-message">${vaultSlotUnlockText(slotNumber)}</div>
+            </div>
+          </div>
+        `);
+      } else {
+        const inlineBuilder = type === 'multi' && Number(state.activeVaultBuilderSlot || 0) === slotNumber
+          ? inlineVaultBuilderHtml(slotNumber)
+          : '';
+        rows.push(`
+          <div class="wallet-slot-wrap empty-wallet-slot-wrap">
+            <button class="start-copy-card slot-card" data-start-copy="${type}" data-slot="${slotNumber}">
+              <span class="slot-index">${slotNumber}</span>
+              ${copyWalletLogoHtml(type === 'multi' ? 'pool' : 'single')}
+              <span class="plus-mark">+</span>
+              <strong>${label}</strong>
+            </button>
+            ${inlineBuilder}
+          </div>
+        `);
+      }
     }
   }
 
@@ -874,20 +2194,23 @@ function renderWalletSection(elementId, wallets, type, slotLimit = null) {
       if (selectedType === 'single') {
         openSlotSettings('single', Number(startBtn.dataset.slot || 1));
       } else {
-        state.selectedMultiTraders = [];
+        state.selectedMultiTraders = ['', '', ''];
         state.vaultName = '';
-        openSlotSettings('multi', Number(startBtn.dataset.slot || 1));
+        openInlineVaultBuilder(Number(startBtn.dataset.slot || 1));
       }
     });
   });
 
   el.querySelectorAll('[data-wallet-id]').forEach(row => {
     row.addEventListener('click', (e) => {
-      if (e.target.closest('button') || e.target.closest('input')) return;
+      if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) return;
       const id = String(row.dataset.walletId);
-      if (state.expandedWallets.has(id)) state.expandedWallets.delete(id);
-      else state.expandedWallets.add(id);
-      renderCopySections(state.wallets || []);
+      const wallet = wallets.find(item => String(item.id) === id) || (row.dataset.defaultVault === '1' ? defaultVaultWallet() : null);
+      if (type === 'multi' || row.dataset.walletMode === 'pool' || row.dataset.defaultVault === '1') {
+        openDefaultVaultModal(wallet || defaultVaultWallet());
+        return;
+      }
+      openSingleCopyModal(wallet);
     });
   });
 
@@ -903,6 +2226,8 @@ function renderWalletSection(elementId, wallets, type, slotLimit = null) {
       renderCopySections(state.wallets || []);
     });
   });
+
+  bindInlineVaultBuilder();
 
   el.querySelectorAll('[data-withdraw-delete]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -1071,7 +2396,7 @@ function renderMultiLeaderboard(pools, wallets) {
     const subtitle = isVault
       ? (t.hot_kind === 'index' ? 'FatBot index / vault' : 'FatBot Vault')
       : 'Hydromancer PnL leaderboard';
-    const actionLabel = isVault ? 'Copy Vault' : 'Copy Wallet';
+    const actionLabel = isFatBotVaultAddMode() && !isVault ? 'Add to vault' : (isVault ? 'Copy Vault' : 'Copy Wallet');
     const copyTarget = t.address || t.wallet_address || t.vault_id;
 
     return `
@@ -1107,7 +2432,11 @@ function renderMultiLeaderboard(pools, wallets) {
   el.querySelectorAll('[data-hot-copy]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openCopyWizard(btn.dataset.hotCopy);
+      if (isFatBotVaultAddMode() && btn.dataset.hotVaultCopy !== '1') {
+        addTraderToVaultBuilder(btn.dataset.hotCopy);
+      } else {
+        openCopyWizard(btn.dataset.hotCopy);
+      }
     });
   });
 }
@@ -1445,7 +2774,7 @@ function profileChartsHtml(trader) {
   const options = profileChartOptions(trader);
   if (!options.length) return '';
 
-  const windowLabel = trader.portfolio_chart_window ? String(trader.portfolio_chart_window).toUpperCase() : '7D';
+  const windowLabel = trader.portfolio_chart_window ? String(trader.portfolio_chart_window).toUpperCase() : '30D';
   const defaultKey = options[0].key;
 
   return `
@@ -1497,18 +2826,22 @@ async function openTrader(address) {
   const el = document.getElementById('traderModalContent');
 
   const preview = [...(state.traders || []), ...(state.fatbotVaults || [])].find(t => String(t.address || '').toLowerCase() === String(address || '').toLowerCase());
-  const previewTitle = preview && preview.source === 'fatbot_vault'
-    ? (preview.label || shortAddress(address))
-    : shortAddress(address);
+  const previewTitle = walletDisplayName(preview || address);
 
   el.innerHTML = `
-    <div class="wizard-head trader-profile-head">
+    <button class="profile-back-btn" data-profile-back="1" title="Back">←</button>
+    <div class="wizard-head trader-profile-head with-back-button">
       <div>
         <span class="pill">TRADER PROFILE</span>
         <div style="display:flex; align-items:center; gap:12px; margin-top:10px;">
           ${preview ? leaderLogoHtml(preview, 0, 'profile-provider-logo') : `<div class="avatar-badge alt-a">${traderBadgeLabel(address)}</div>`}
           <div>
-            <h2 style="margin:0;">${previewTitle}</h2>
+            <div class="profile-wallet-title-row">
+              <h2 style="margin:0;">${previewTitle}</h2>
+              <button class="wallet-icon-btn profile-wallet-action" data-rename-wallet="${address}" title="Rename wallet">✎</button>
+              <a class="wallet-icon-btn wallet-link-btn profile-wallet-action" data-wallet-link="1" href="${hypurrscanAddressUrl(address)}" target="_blank" rel="noopener noreferrer" title="Open on Hypurrscan">${externalLinkIconSvg()}</a>
+            </div>
+            <p class="muted" style="margin:4px 0 0;">${shortAddress(address)}</p>
           </div>
         </div>
       </div>
@@ -1523,6 +2856,19 @@ async function openTrader(address) {
     </div>
   `;
 
+  const loadingBackBtn = el.querySelector('[data-profile-back]');
+  if (loadingBackBtn) loadingBackBtn.addEventListener('click', () => closeModal('traderModal'));
+  el.querySelectorAll('[data-rename-wallet]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      renameWalletAlias(btn.dataset.renameWallet);
+      const title = el.querySelector('.profile-wallet-title-row h2');
+      if (title) title.textContent = walletDisplayName(btn.dataset.renameWallet);
+    });
+  });
+  el.querySelectorAll('[data-wallet-link]').forEach(link => {
+    link.addEventListener('click', (e) => e.stopPropagation());
+  });
   el.querySelector('[data-modal-copy]').addEventListener('click', () => {
     closeModal('traderModal');
     openCopyWizard(address);
@@ -1557,10 +2903,10 @@ async function openTrader(address) {
       <div class="detail-card"><span>Account Value</span><strong>${moneyOrDash(trader.account_value)}</strong></div>
       <div class="detail-card"><span>Long / Short</span><strong>${exposureShareDisplay(trader)}</strong></div>
       <div class="detail-card"><span>Gross Exposure</span><strong>${grossExposureDisplay(trader)}</strong></div>
-      <div class="detail-card"><span>Win Rate</span><strong>${winRateDisplay(trader)}</strong></div>
-      <div class="detail-card"><span>Total Trades</span><strong>${Number(trader.total_trades || trader.trades || 0).toLocaleString()}</strong></div>
+      <div class="detail-card"><span>30D Win Rate</span><strong>${winRateDisplay(trader)}</strong></div>
+      <div class="detail-card"><span>30D Trades</span><strong>${Number(trader.total_trades || trader.trades || 0).toLocaleString()}</strong></div>
       <div class="detail-card"><span>Account Age</span><strong>${Number(trader.account_age_days || 0)} days</strong></div>
-      <div class="detail-card"><span>Volume</span><strong>${fmtUsd(trader.volume || trader.volume_traded || 0)}</strong></div>
+      <div class="detail-card"><span>30D Volume</span><strong>${fmtUsd(trader.volume || trader.volume_traded || 0)}</strong></div>
       <div class="detail-card"><span>Live Positions</span><strong>${Number(trader.open_positions || 0)}</strong></div>
   ` : `
       <div class="detail-card"><span>30D PnL</span><strong class="${positiveClass(trader.pnl_30d)}">${fmtPct(trader.pnl_30d)}</strong></div>
@@ -1570,14 +2916,22 @@ async function openTrader(address) {
       <div class="detail-card"><span>Win Rate</span><strong>${winRateDisplay(trader)}</strong></div>
   `;
 
+  const traderDisplayName = walletDisplayName(trader);
+
   el.innerHTML = `
-    <div class="wizard-head trader-profile-head profile-head-top">
+    <button class="profile-back-btn" data-profile-back="1" title="Back">←</button>
+    <div class="wizard-head trader-profile-head profile-head-top with-back-button">
       <div>
         <span class="pill">TRADER PROFILE</span>
         <div style="display:flex; align-items:center; gap:12px; margin-top:10px;">
           ${leaderLogoHtml(trader, 0, 'profile-provider-logo')}
           <div>
-            <h2 style="margin:0;">${trader.source === 'fatbot_vault' ? (trader.label || shortAddress(trader.address)) : shortAddress(trader.address)}</h2>
+            <div class="profile-wallet-title-row">
+              <h2 style="margin:0;">${traderDisplayName}</h2>
+              <button class="wallet-icon-btn profile-wallet-action" data-rename-wallet="${trader.address}" title="Rename wallet">✎</button>
+              <a class="wallet-icon-btn wallet-link-btn profile-wallet-action" data-wallet-link="1" href="${hypurrscanAddressUrl(trader.address)}" target="_blank" rel="noopener noreferrer" title="Open on Hypurrscan">${externalLinkIconSvg()}</a>
+            </div>
+            <p class="muted" style="margin:4px 0 0;">${shortAddress(trader.address)}</p>
             ${isLive ? '' : `<p>${trader.label}</p>`}
           </div>
         </div>
@@ -1604,15 +2958,30 @@ async function openTrader(address) {
           <div><div class="row-title coin-side ${sideClass(p.side)}">${displayCoinLabel(p.coin)}</div><div class="row-sub">${p.side} · ${Number(p.leverage || 0).toFixed(1)}x</div></div>
           <div><div class="row-sub">Notional</div><strong>${fmtUsd(p.notional)}</strong></div>
           <div><div class="row-sub">Entry</div><strong>${p.entry ? Number(p.entry).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "—"}</strong></div>
-          <div><div class="row-sub">Live Price</div><strong>${(p.live_price || p.display_price) ? Number(p.live_price || p.display_price).toLocaleString(undefined, { maximumFractionDigits: 6 }) : "—"}</strong></div>
+          <div><div class="row-sub">Live Price</div><strong>${fmtLivePrice(p.live_price || p.display_price)}</strong></div>
           <div><div class="row-sub">PnL</div><strong class="${positiveClass(p.pnl)}">${fmtUsd(p.pnl)}</strong></div>
-          <div><div class="row-sub">Liq</div><strong>${p.liq_price ? Number(p.liq_price).toLocaleString() : '—'}</strong></div>
+          <div><div class="row-sub">Liq</div><strong>${fmtLivePrice(p.liq_price)}</strong></div>
         </div>
       `).join('') : `<p class="muted">${isLive ? 'No position rows were returned by the profile endpoint. This is a data-fetch diagnostic state, not a confirmed zero-position result.' : 'No live positions available for this trader yet.'}</p>`}
     </div>
   `;
 
   bindProfileChartToggle(trader);
+
+  const profileBackBtn = el.querySelector('[data-profile-back]');
+  if (profileBackBtn) profileBackBtn.addEventListener('click', () => closeModal('traderModal'));
+
+  el.querySelectorAll('[data-rename-wallet]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      renameWalletAlias(btn.dataset.renameWallet);
+      const title = el.querySelector('.profile-wallet-title-row h2');
+      if (title) title.textContent = walletDisplayName(btn.dataset.renameWallet);
+    });
+  });
+  el.querySelectorAll('[data-wallet-link]').forEach(link => {
+    link.addEventListener('click', (e) => e.stopPropagation());
+  });
 
   el.querySelector('[data-modal-copy]').addEventListener('click', () => {
     closeModal('traderModal');
@@ -1622,6 +2991,8 @@ async function openTrader(address) {
 
 
 function openSlotSettings(mode, slot) {
+  const copyModal = document.getElementById('copyModal');
+  if (copyModal) copyModal.classList.remove('direct-copy-modal');
   state.copySetupMode = mode;
   state.selectedSlot = slot;
   state.wizardStep = 0;
@@ -1639,14 +3010,18 @@ function openSlotSettings(mode, slot) {
     document.getElementById('copyModalTrader').textContent = `Single Copytrading · Slot #${slot}`;
   } else {
     const multiCount = multiWalletCount();
-    if (multiCount >= multiSlotLimit()) {
+    if (multiCount >= unlockedVaultSlotLimit()) {
       showMultiSlotsFullAlert();
+      return;
+    }
+    if (Number(slot || 1) > unlockedVaultSlotLimit()) {
+      alert(vaultSlotUnlockText(slot));
       return;
     }
     state.selectedTrader = null;
     if (!state.vaultName) state.vaultName = `FatBot Vault #${slot}`;
-    if (!state.selectedMultiTraders || state.selectedMultiTraders.length === 0) {
-      state.selectedMultiTraders = state.traders.slice(0, 5).map(t => t.address);
+    if (!Array.isArray(state.selectedMultiTraders) || state.selectedMultiTraders.length === 0) {
+      state.selectedMultiTraders = ['', '', ''];
     }
     document.getElementById('copyModalTrader').textContent = `FatBot Vaults · Slot #${slot}`;
   }
@@ -1662,8 +3037,19 @@ function singleWalletCount() {
   return state.wallets.filter(w => w.mode !== 'pool').length;
 }
 
+function visibleVaultWallets(wallets = state.wallets || []) {
+  return (wallets || []).filter(w => w.mode === 'pool' && !isVaultClosed(w) && !isRemovedPresetVault(w));
+}
+
+function upsertWalletInState(wallet) {
+  if (!wallet || !wallet.id) return;
+  const id = String(wallet.id);
+  const without = (state.wallets || []).filter(w => String(w.id) !== id);
+  state.wallets = [wallet, ...without];
+}
+
 function multiWalletCount() {
-  return state.wallets.filter(w => w.mode === 'pool').length;
+  return visibleVaultWallets(state.wallets || []).length;
 }
 
 function showSingleSlotsFullAlert() {
@@ -1671,10 +3057,12 @@ function showSingleSlotsFullAlert() {
 }
 
 function showMultiSlotsFullAlert() {
-  alert(`FatBot Vault slots are full: ${multiSlotLimit()}/${multiSlotLimit()}. Close or delete one FatBot Vault before creating another one.`);
+  alert(`The first ${unlockedVaultSlotLimit()} FatBot Vault slots are full. Close one vault or unlock more slots by Perps volume.`);
 }
 
 function openVaultCopySettings(pool) {
+  const copyModal = document.getElementById('copyModal');
+  if (copyModal) copyModal.classList.remove('direct-copy-modal');
   if (singleWalletCount() >= singleSlotLimit()) {
     showSingleSlotsFullAlert();
     return;
@@ -1713,10 +3101,62 @@ function openCopyWizard(address) {
   state.selectedTrader = [...state.traders, ...state.fatbotVaults].find(t => t.address === address) || { address };
   state.wizardStep = 0;
   state.generatedWallet = null;
-  document.getElementById('copyModalTrader').textContent = `Copying selected trader: ${shortAddress(address)}`;
+  document.getElementById('copyModalTrader').textContent = `Copying: ${shortAddress(address)}`;
+  const copyModal = document.getElementById('copyModal');
+  if (copyModal) copyModal.classList.add('direct-copy-modal');
+  const copyModalTitle = document.querySelector('#copyModal .wizard-head h2');
+  if (copyModalTitle) copyModalTitle.textContent = 'Create Copytrading Wallet';
   renderWizard();
   openModal('copyModal');
 }
+
+
+function singleCopyTopChartHtml(trader) {
+  const options = profileChartOptions(trader).filter(o => o.key === 'pnl_usd');
+  const option = options[0];
+  if (!option) {
+    return `
+      <div class="copy-source-chart-card empty">
+        <div class="profile-chart-empty">No 30D PnL chart data for this wallet yet</div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="copy-source-chart-card">
+      <div class="copy-source-chart-head">
+        <div>
+          <span class="pill">30D PnL CHART</span>
+          <h3>${walletDisplayName(trader)}</h3>
+          <p>${shortAddress(trader.address)}</p>
+        </div>
+      </div>
+      <div class="copy-source-chart-body">
+        ${profileSingleChartInnerHtml(trader, 'pnl_usd')}
+      </div>
+    </div>
+  `;
+}
+
+function singleCopySourceSummaryHtml(trader) {
+  return `
+    <div class="copy-source-metrics">
+      <div class="detail-card"><span>Account Value</span><strong>${moneyOrDash(trader.account_value)}</strong></div>
+      <div class="detail-card"><span>30D PnL</span><strong class="${positiveClass(pnlNumber(trader))}">${pnlDisplay(trader)}</strong></div>
+      <div class="detail-card"><span>Gross Exposure</span><strong>${grossExposureDisplay(trader)}</strong></div>
+    </div>
+  `;
+}
+
+function singleCopyWalletNameRow() {
+  return `
+    <div class="form-row copy-wallet-name-row">
+      <label>Copytrading name</label>
+      <input id="singleWalletName" class="form-input" placeholder="Name your copytrading strategy" value="${state.singleWalletName || ''}" />
+    </div>
+  `;
+}
+
 
 function renderWizard() {
   const step = state.wizardStep;
@@ -1727,11 +3167,11 @@ function renderWizard() {
   back.style.visibility = step === 0 ? 'hidden' : 'visible';
 
   if (step === 0) {
-    next.textContent = state.copySetupMode === 'vault_single' ? 'Copy Vault' : (isMulti ? 'Create FatBot Vault' : 'Create Single Wallet');
+    next.textContent = state.copySetupMode === 'vault_single' ? 'Copy Vault' : (isMulti ? 'Create FatBot Vault' : 'Create and fund copytrading wallet');
 
     if (state.copySetupMode === 'vault_single') {
       const pool = state.selectedVaultToCopy;
-      const members = (pool?.members || []).map(m => m.trader_address).slice(0, 5);
+      const members = (pool?.members || []).map(m => m.trader_address).slice(0, 10);
       el.innerHTML = `
         <h3>Step 1: Copy vault settings</h3>
         <p class="muted">This creates one user copy wallet in Single Copytrading. The source is the selected multi vault.</p>
@@ -1745,7 +3185,7 @@ function renderWizard() {
             <div class="row-sub">${members.length} source wallets · ${members.map(shortAddress).join(' · ')}</div>
           </div>
         </div>
-        ${rangeRow('Copy multiplier', 'multiplier', 0.1, 10, 0.1, 'x')}
+        ${rangeRow('Gross exposure multiplier', 'multiplier', 0.1, 10, 0.1, 'x')}
         ${drawdownRow()}
         ${marginInfoRow()}
         ${numberRow('Max gross exposure', 'max_gross_exposure_pct', '%')}
@@ -1755,45 +3195,75 @@ function renderWizard() {
     }
 
     if (isMulti) {
+      next.textContent = 'Next steps';
       el.innerHTML = `
-        <h3>Step 1: FatBot Vault settings</h3>
-        <p class="muted">Select up to 5 leaderboard wallets or add your own wallet address.</p>
+        <h3>Step 1: Add traders to vault</h3>
+        <p class="muted">Add manual wallets here, or click Add to vault from the leaderboard on the left.</p>
         <div class="detail-grid">
           <div class="detail-card"><span>Mode</span><strong>FatBot Vault</strong></div>
-          <div class="detail-card"><span>Slot</span><strong>#${state.selectedSlot || 1}</strong></div>
+          <div class="detail-card"><span>Vault slot</span><strong>#${state.selectedSlot || 1}</strong></div>
         </div>
         ${vaultNameRow()}
-        ${multiWalletPicker()}
-        ${rangeRow('Copy multiplier', 'multiplier', 0.1, 10, 0.1, 'x')}
-        ${drawdownRow()}
-        ${marginInfoRow()}
-        ${numberRow('Max gross exposure', 'max_gross_exposure_pct', '%')}
+        ${vaultTraderSlotRows()}
       `;
-      bindWizardInputs();
       bindVaultName();
-      bindMultiWalletPicker();
+      bindVaultTraderSlots();
       return;
     }
 
+    const copiedTrader = state.selectedTrader || {};
+    next.textContent = 'Create and fund copytrading wallet';
+
     el.innerHTML = `
-      <h3>Step 1: Single copy settings</h3>
-      <p class="muted">Choose one leaderboard wallet or add your own wallet address.</p>
-      <div class="detail-grid">
-        <div class="detail-card"><span>Mode</span><strong>Single Trader Copy</strong></div>
-        <div class="detail-card"><span>Slot</span><strong>#${state.selectedSlot || 'direct'}</strong></div>
+      <div class="single-copy-redesign">
+        ${singleCopyTopChartHtml(copiedTrader)}
+
+        <div class="copy-source-address-card">
+          <div>
+            <div class="copy-source-pill-row">
+              <span class="pill">COPY SOURCE</span>
+              <a class="wallet-icon-btn wallet-link-btn profile-wallet-action" data-wallet-link="1" href="${hypurrscanAddressUrl(copiedTrader.address)}" target="_blank" rel="noopener noreferrer" title="Open on Hypurrscan">${externalLinkIconSvg()}</a>
+            </div>
+            <h3>${walletDisplayName(copiedTrader)}</h3>
+            <p>${shortAddress(copiedTrader.address)}</p>
+          </div>
+          ${singleCopyWalletNameRow()}
+        </div>
+
+        ${singleCopySourceSummaryHtml(copiedTrader)}
+
+        <div class="copy-settings-block">
+          <h3>Set your exposure multiplier</h3>
+          ${rangeRow('Gross exposure multiplier', 'multiplier', 0.1, 10, 0.1, 'x')}
+          ${drawdownRow()}
+          ${marginInfoRow()}
+        </div>
       </div>
-      ${singleWalletNameRow()}
-      ${traderSelectRow()}
-      ${customSingleWalletRow()}
-      ${rangeRow('Copy multiplier', 'multiplier', 0.1, 10, 0.1, 'x')}
-      ${drawdownRow()}
-      ${marginInfoRow()}
-      ${numberRow('Max gross exposure', 'max_gross_exposure_pct', '%')}
     `;
     bindWizardInputs();
     bindSingleWalletName();
-    bindTraderSelect();
-    bindCustomSingleWallet();
+    el.querySelectorAll('[data-wallet-link]').forEach(link => {
+      link.addEventListener('click', (e) => e.stopPropagation());
+    });
+  }
+
+  if (step === 1 && isMulti) {
+    next.textContent = 'Create and fund vault address';
+    el.innerHTML = `
+      <h3>Step 2: Vault risk settings</h3>
+      <p class="muted">Set risk controls for this FatBot Vault.</p>
+      <div class="detail-grid">
+        <div class="detail-card"><span>Selected traders</span><strong>${selectedVaultTraderAddresses().length}</strong></div>
+        <div class="detail-card"><span>Vault slot</span><strong>#${state.selectedSlot || 1}</strong></div>
+      </div>
+      <div class="copy-settings-block">
+        ${rangeRow('Vault exposure multiplier', 'multiplier', 0.1, 10, 0.1, 'x')}
+        ${drawdownRow()}
+        ${marginInfoRow()}
+      </div>
+    `;
+    bindWizardInputs();
+    return;
   }
 
   if (step === 1) {
@@ -1816,7 +3286,7 @@ function renderWizard() {
       <p class="muted">Activate the wallet and seed demo target positions for the dashboard preview.</p>
       <div class="detail-grid">
         <div class="detail-card"><span>Wallet</span><strong>${state.generatedWallet.wallet_address}</strong></div>
-        <div class="detail-card"><span>Copy multiplier</span><strong>${state.wizardSettings.multiplier}x</strong></div>
+        <div class="detail-card"><span>Gross exposure multiplier</span><strong>${state.wizardSettings.multiplier}x</strong></div>
         <div class="detail-card"><span>Max drawdown</span><strong>${Math.abs(state.wizardSettings.stop_drawdown_pct)}%</strong></div>
         <div class="detail-card"><span>Max gross exposure</span><strong>${state.wizardSettings.max_gross_exposure_pct}%</strong></div>
       </div>
@@ -1883,6 +3353,323 @@ function customSingleWalletRow() {
   `;
 }
 
+
+
+function normalizeVaultTraderSlots() {
+  if (!Array.isArray(state.selectedMultiTraders)) state.selectedMultiTraders = ['', '', ''];
+  state.selectedMultiTraders = state.selectedMultiTraders.map(x => String(x || '').trim()).slice(0, 10);
+  while (state.selectedMultiTraders.length < 3) state.selectedMultiTraders.push('');
+  return state.selectedMultiTraders;
+}
+
+function selectedVaultTraderAddresses() {
+  const seen = new Set();
+  const out = [];
+  normalizeVaultTraderSlots().forEach(addr => {
+    const value = String(addr || '').trim();
+    const key = value.toLowerCase();
+    if (isValidWallet(value) && !seen.has(key)) {
+      seen.add(key);
+      out.push(value);
+    }
+  });
+  return out;
+}
+
+function addTraderToVaultBuilder(address) {
+  const value = String(address || '').trim();
+
+  if (!document.getElementById('traderModal')?.classList.contains('hidden') && state.defaultVaultModalTab === 'management') {
+    const modalWallet = activeVaultModalWallet();
+    const members = getVaultModalMembers(modalWallet);
+    if (isValidWallet(value) && !members.some(x => String(x).toLowerCase() === value.toLowerCase())) {
+      members.push(value);
+      setVaultModalMembers(modalWallet, members);
+      renderDefaultVaultModalContent();
+    }
+    return;
+  }
+  if (!isValidWallet(value)) {
+    alert('Invalid wallet address.');
+    return;
+  }
+
+  if (!state.activeVaultBuilderSlot) {
+    state.activeVaultBuilderSlot = Math.min(unlockedVaultSlotLimit(), multiWalletCount() + (isFatBotVaultsView() && !isVaultClosed(defaultVaultWallet()) ? 2 : 1));
+    state.selectedSlot = state.activeVaultBuilderSlot;
+    state.copySetupMode = 'multi';
+    state.vaultBuilderStep = 0;
+    state.vaultName = state.vaultName || `FatBot Vault #${state.selectedSlot}`;
+    state.selectedMultiTraders = ['', '', ''];
+  }
+
+  normalizeVaultTraderSlots();
+  const exists = state.selectedMultiTraders.some(x => String(x || '').toLowerCase() === value.toLowerCase());
+  if (exists) {
+    renderCopySections(state.wallets || []);
+    return;
+  }
+
+  let index = state.selectedMultiTraders.findIndex(x => !String(x || '').trim());
+  if (index < 0) {
+    if (state.selectedMultiTraders.length >= 10) {
+      alert('Maximum 10 traders per vault.');
+      return;
+    }
+    state.selectedMultiTraders.push('');
+    index = state.selectedMultiTraders.length - 1;
+  }
+  state.selectedMultiTraders[index] = value;
+  renderCopySections(state.wallets || []);
+}
+
+function openInlineVaultBuilder(slot) {
+  const slotNumber = Number(slot || 1);
+  if (slotNumber > unlockedVaultSlotLimit()) {
+    alert(vaultSlotUnlockText(slotNumber));
+    return;
+  }
+  const effectiveVisibleVaultCount = multiWalletCount() + (isFatBotVaultsView() && !isVaultClosed(defaultVaultWallet()) ? 1 : 0);
+  if (effectiveVisibleVaultCount >= unlockedVaultSlotLimit()) {
+    showMultiSlotsFullAlert();
+    return;
+  }
+
+  state.activeVaultBuilderSlot = slotNumber;
+  state.selectedSlot = slotNumber;
+  state.copySetupMode = 'multi';
+  state.vaultBuilderStep = 0;
+  state.vaultName = state.vaultName || `FatBot Vault #${slotNumber}`;
+  if (!Array.isArray(state.selectedMultiTraders) || !state.selectedMultiTraders.length) {
+    state.selectedMultiTraders = ['', '', ''];
+  }
+  renderCopySections(state.wallets || []);
+}
+
+function closeInlineVaultBuilder() {
+  state.activeVaultBuilderSlot = null;
+  state.vaultBuilderStep = 0;
+  state.selectedMultiTraders = [];
+  state.vaultName = '';
+  renderCopySections(state.wallets || []);
+}
+
+function vaultTraderDropdownOptions(selected) {
+  const current = String(selected || '').toLowerCase();
+  const rows = (state.traders || []).slice(0, 50).map((t, idx) => {
+    const addr = String(t.address || '');
+    if (!addr) return '';
+    const label = `#${idx + 1} ${walletDisplayName(t)} · ${shortAddress(addr)} · ${pnlDisplay(t)}`;
+    return `<option value="${addr}" ${addr.toLowerCase() === current ? 'selected' : ''}>${label}</option>`;
+  }).join('');
+  return `<option value="">Select trader from leaderboard</option>${rows}`;
+}
+
+function vaultTraderSlotRows() {
+  const slots = normalizeVaultTraderSlots();
+  return `
+    <div class="vault-trader-slot-list">
+      ${slots.map((addr, idx) => `
+        <div class="vault-trader-slot-row">
+          <span class="slot-index">${idx + 1}</span>
+          <input class="form-input vault-trader-input" data-vault-trader-index="${idx}" placeholder="Pick wallet from leaderboard or paste your own" value="${addr || ''}" />
+          <button class="wallet-icon-btn" type="button" data-remove-vault-trader="${idx}" title="Clear trader slot">×</button>
+        </div>
+      `).join('')}
+    </div>
+    <button type="button" class="secondary add-trader-slot-btn" id="addVaultTraderSlot">add trader slot</button>
+    <small class="muted">Minimum 3 traders, maximum 10 traders. Click Add to vault from the leaderboard or paste your own wallet address.</small>
+  `;
+}
+
+function bindVaultTraderSlots() {
+  document.querySelectorAll('[data-vault-trader-index]').forEach(input => {
+    input.addEventListener('input', () => {
+      normalizeVaultTraderSlots();
+      const idx = Number(input.dataset.vaultTraderIndex || 0);
+      state.selectedMultiTraders[idx] = input.value.trim();
+    });
+  });
+
+  document.querySelectorAll('[data-remove-vault-trader]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      normalizeVaultTraderSlots();
+      const idx = Number(btn.dataset.removeVaultTrader || 0);
+      state.selectedMultiTraders[idx] = '';
+      renderCopySections(state.wallets || []);
+    });
+  });
+
+  const addBtn = document.getElementById('addVaultTraderSlot');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      normalizeVaultTraderSlots();
+      if (state.selectedMultiTraders.length >= 10) {
+        alert('Maximum 10 traders per vault.');
+        return;
+      }
+      state.selectedMultiTraders.push('');
+      renderCopySections(state.wallets || []);
+    });
+  }
+}
+
+function inlineVaultBuilderHtml(slotNumber) {
+  const step = Number(state.vaultBuilderStep || 0);
+  if (step === 1) {
+    return `
+      <div class="inline-vault-builder" data-inline-vault-builder="${slotNumber}">
+        <div class="inline-vault-head">
+          <div>
+            <span class="pill">FATBOT VAULT SETUP</span>
+            <h3>Step 2: Vault risk settings</h3>
+            <p class="muted">${selectedVaultTraderAddresses().length} selected traders · Slot #${slotNumber}</p>
+          </div>
+          <button class="wallet-icon-btn" type="button" data-close-inline-vault="1">×</button>
+        </div>
+        <div class="copy-settings-block">
+          ${rangeRow('Vault exposure multiplier', 'multiplier', 0.1, 10, 0.1, 'x')}
+          ${drawdownRow()}
+          ${marginInfoRow()}
+        </div>
+        <div class="inline-vault-actions">
+          <button class="secondary" type="button" data-vault-builder-back="1">Back</button>
+          <button class="primary" type="button" data-create-inline-vault="1">Create and fund vault address</button>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="inline-vault-builder" data-inline-vault-builder="${slotNumber}">
+      <div class="inline-vault-head">
+        <div>
+          <span class="pill">FATBOT VAULT SETUP</span>
+          <h3>Step 1: Add traders to vault</h3>
+          <p class="muted">Pick wallets from the leaderboard or paste your own wallet addresses.</p>
+        </div>
+        <button class="wallet-icon-btn" type="button" data-close-inline-vault="1">×</button>
+      </div>
+      ${vaultNameRow()}
+      ${vaultTraderSlotRows()}
+      <div class="inline-vault-actions">
+        <button class="primary" type="button" data-vault-builder-next="1">Next steps</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindInlineVaultBuilder() {
+  bindVaultName();
+  bindVaultTraderSlots();
+  bindWizardInputs();
+
+  document.querySelectorAll('[data-close-inline-vault]').forEach(btn => {
+    btn.addEventListener('click', closeInlineVaultBuilder);
+  });
+
+  document.querySelectorAll('[data-vault-builder-next]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const selected = selectedVaultTraderAddresses();
+      if (selected.length < 3) {
+        alert('Add at least 3 valid trader wallets.');
+        return;
+      }
+      if (selected.length > 10) {
+        alert('Maximum 10 traders per vault.');
+        return;
+      }
+      state.selectedMultiTraders = selected.slice(0, 10);
+      state.vaultBuilderStep = 1;
+      renderCopySections(state.wallets || []);
+    });
+  });
+
+  document.querySelectorAll('[data-vault-builder-back]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.vaultBuilderStep = 0;
+      renderCopySections(state.wallets || []);
+    });
+  });
+
+  document.querySelectorAll('[data-create-inline-vault]').forEach(btn => {
+    btn.addEventListener('click', () => createInlineVaultFromBuilder(btn));
+  });
+}
+
+async function createInlineVaultFromBuilder(btn) {
+  if (state.isCreatingCopy) return;
+
+  const selected = selectedVaultTraderAddresses();
+  if (selected.length < 3) {
+    alert('Add at least 3 valid trader wallets.');
+    return;
+  }
+  if (selected.length > 10) {
+    alert('Maximum 10 traders per vault.');
+    return;
+  }
+  const effectiveVisibleVaultCount = multiWalletCount() + (isFatBotVaultsView() && !isVaultClosed(defaultVaultWallet()) ? 1 : 0);
+  if (effectiveVisibleVaultCount >= unlockedVaultSlotLimit()) {
+    showMultiSlotsFullAlert();
+    return;
+  }
+
+  state.isCreatingCopy = true;
+  const originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Creating vault...';
+  }
+
+  try {
+    const pool = await api('/api/pools', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: state.vaultName || `FatBot Vault #${state.activeVaultBuilderSlot || 1}`,
+        vault_name: state.vaultName || `FatBot Vault #${state.activeVaultBuilderSlot || 1}`,
+        trader_addresses: selected,
+        multiplier: state.wizardSettings.multiplier,
+      }),
+    });
+
+    if (!pool || !pool.wallet_id) {
+      throw new Error('Vault API created no wallet_id. Check backend /api/pools response.');
+    }
+
+    await api(`/api/wallets/${pool.wallet_id}/settings`, {
+      method: 'PATCH',
+      body: JSON.stringify(state.wizardSettings),
+    });
+    const activatedWallet = await api(`/api/wallets/${pool.wallet_id}/activate`, { method: 'POST' });
+
+    if (activatedWallet && activatedWallet.id) {
+      upsertWalletInState(activatedWallet);
+    } else {
+      const freshWallet = await api(`/api/wallets/${pool.wallet_id}`);
+      upsertWalletInState(freshWallet);
+    }
+
+    state.activeVaultBuilderSlot = null;
+    state.vaultBuilderStep = 0;
+    state.selectedMultiTraders = [];
+    state.vaultName = '';
+    renderCopySections(state.wallets || []);
+    renderMultiLeaderboard(state.pools || [], state.wallets || []);
+
+    await loadAll();
+    alert('Vault created.');
+  } catch (err) {
+    console.error(err);
+    alert(`Create failed: ${err.message || err}`);
+  } finally {
+    state.isCreatingCopy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || 'Create and fund vault address';
+    }
+  }
+}
 
 function vaultNameRow() {
   return `
@@ -1972,9 +3759,9 @@ function bindMultiWalletPicker() {
     input.addEventListener('change', () => {
       const addr = input.dataset.multiWallet;
       if (input.checked) {
-        if (state.selectedMultiTraders.length >= 5) {
+        if (state.selectedMultiTraders.length >= 10) {
           input.checked = false;
-          alert('You can select maximum 5 wallets.');
+          alert('You can select maximum 10 wallets.');
           return;
         }
         if (!state.selectedMultiTraders.includes(addr)) state.selectedMultiTraders.push(addr);
@@ -1996,8 +3783,8 @@ function bindMultiWalletPicker() {
       alert('Enter a valid wallet address starting with 0x.');
       return;
     }
-    if (state.selectedMultiTraders.length >= 5) {
-      alert('You can select maximum 5 wallets.');
+    if (state.selectedMultiTraders.length >= 10) {
+      alert('You can select maximum 10 wallets.');
       return;
     }
     if (!state.selectedMultiTraders.includes(value)) state.selectedMultiTraders.push(value);
@@ -2068,55 +3855,75 @@ function bindWizardInputs() {
 }
 
 async function nextWizard() {
+  const nextBtn = document.getElementById('wizardNext');
+  const originalText = nextBtn ? nextBtn.textContent : '';
+  const isMulti = state.copySetupMode === 'multi';
+  const isVaultSingle = state.copySetupMode === 'vault_single';
+
+  if (isMulti && state.wizardStep === 0) {
+    const selected = selectedVaultTraderAddresses();
+    if (selected.length < 3) {
+      alert('Add at least 3 valid trader wallets.');
+      return;
+    }
+    if (selected.length > 10) {
+      alert('Maximum 10 traders per vault.');
+      return;
+    }
+    state.selectedMultiTraders = selected.slice(0, 10);
+    state.wizardStep = 1;
+    renderWizard();
+    return;
+  }
+
   if (state.isCreatingCopy) return;
   state.isCreatingCopy = true;
 
-  const nextBtn = document.getElementById('wizardNext');
-  const originalText = nextBtn ? nextBtn.textContent : '';
   if (nextBtn) {
     nextBtn.disabled = true;
-    nextBtn.textContent = 'Creating...';
+    nextBtn.textContent = (isMulti && state.wizardStep === 1) ? 'Creating vault...' : 'Creating...';
   }
 
   try {
-    const isMulti = state.copySetupMode === 'multi';
-    const isVaultSingle = state.copySetupMode === 'vault_single';
-
-    if (state.wizardStep === 0) {
-      if (isMulti) {
-        if (multiWalletCount() >= multiSlotLimit()) {
-          showMultiSlotsFullAlert();
-          return;
-        }
-        const selected = state.selectedMultiTraders.slice(0, 5);
-        if (selected.length < 2) {
-          alert('Select at least 2 wallets for multi copytrading.');
-          return;
-        }
-
-        const pool = await api('/api/pools', {
-          method: 'POST',
-          body: JSON.stringify({
-            name: state.vaultName || `FatBot Vault #${state.selectedSlot || 1}`,
-            vault_name: state.vaultName || `FatBot Vault #${state.selectedSlot || 1}`,
-            trader_addresses: selected,
-            multiplier: state.wizardSettings.multiplier,
-          }),
-        });
-
-        if (pool.wallet_id) {
-          await api(`/api/wallets/${pool.wallet_id}/settings`, {
-            method: 'PATCH',
-            body: JSON.stringify(state.wizardSettings),
-          });
-          await api(`/api/wallets/${pool.wallet_id}/activate`, { method: 'POST' });
-        }
-
-        await loadAll();
-        closeModal('copyModal');
+    if (isMulti && state.wizardStep === 1) {
+      if (multiWalletCount() >= unlockedVaultSlotLimit()) {
+        showMultiSlotsFullAlert();
+        return;
+      }
+      const selected = selectedVaultTraderAddresses();
+      if (selected.length < 3) {
+        alert('Add at least 3 valid trader wallets.');
+        return;
+      }
+      if (selected.length > 10) {
+        alert('Maximum 10 traders per vault.');
         return;
       }
 
+      const pool = await api('/api/pools', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: state.vaultName || `FatBot Vault #${state.selectedSlot || 1}`,
+          vault_name: state.vaultName || `FatBot Vault #${state.selectedSlot || 1}`,
+          trader_addresses: selected,
+          multiplier: state.wizardSettings.multiplier,
+        }),
+      });
+
+      if (pool.wallet_id) {
+        await api(`/api/wallets/${pool.wallet_id}/settings`, {
+          method: 'PATCH',
+          body: JSON.stringify(state.wizardSettings),
+        });
+        await api(`/api/wallets/${pool.wallet_id}/activate`, { method: 'POST' });
+      }
+
+      await loadAll();
+      closeModal('copyModal');
+      return;
+    }
+
+    if (state.wizardStep === 0) {
       if (isVaultSingle) {
         if (singleWalletCount() >= singleSlotLimit()) {
           showSingleSlotsFullAlert();
@@ -2191,7 +3998,7 @@ async function nextWizard() {
       nextBtn.textContent = originalText || (
         state.copySetupMode === 'vault_single'
           ? 'Copy Vault'
-          : (state.copySetupMode === 'multi' ? 'Create FatBot Vault' : 'Create Single Wallet')
+          : (state.copySetupMode === 'multi' ? 'Create and fund vault address' : 'Create and fund copytrading wallet')
       );
     }
   }
@@ -2203,7 +4010,12 @@ function backWizard() {
 }
 
 function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+function closeModal(id) {
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.add('hidden');
+  if (id === 'copyModal') modal.classList.remove('direct-copy-modal');
+}
 
 function bindMainNavigation() {
   document.querySelectorAll('[data-main-view]').forEach(btn => {
@@ -2211,6 +4023,7 @@ function bindMainNavigation() {
       document.querySelectorAll('[data-main-view]').forEach(x => x.classList.remove('active'));
       btn.classList.add('active');
       state.mainView = btn.dataset.mainView === 'fatbot-vaults' ? 'fatbot-vaults' : 'copytrading';
+      renderTopInfoPanel();
       renderLeaderboardTabs();
       renderCopySections(state.wallets || []);
       renderMultiLeaderboard(state.pools || [], state.wallets || []);
@@ -2222,6 +4035,8 @@ function bindMainNavigation() {
 
 document.addEventListener('click', (e) => {
   if (e.target.dataset.close) closeModal(e.target.dataset.close);
+  if (e.target && e.target.id === 'traderModal') closeModal('traderModal');
+  if (e.target && e.target.id === 'copyModal') closeModal('copyModal');
 });
 
 const wizardNextBtn = document.getElementById('wizardNext');
@@ -2231,6 +4046,8 @@ if (wizardBackBtn) wizardBackBtn.addEventListener('click', backWizard);
 
 bindMainNavigation();
 bindLeaderboardCategoryTabs();
+ensureFatbotHowItWorksLoop();
+renderTopInfoPanel();
 readLeaderboardFiltersFromDom();
 syncCategoryToMarketFilter();
 
@@ -2280,3 +4097,75 @@ function renderTargets() { /* removed in v9 */ }
 /* v129 FatBot Selection uses direct real wallet scan */
 
 /* v130 FatBot Selection public HL direct scan + snapshot profile lookup */
+
+/* v133 wallet aliases, Hypurrscan links, 30D labels, profile back/backdrop close */
+
+/* v134 exact external-link SVG icon and robust Longterm profitable display */
+
+/* v135 profile modal wallet rename + Hypurrscan redirect actions */
+
+/* v137 redesigned direct Copy Wallet modal */
+
+/* v138 direct copy modal starts with chart; link moved to copy source; copytrading name label */
+
+/* v139 gross exposure multiplier wording + leaderboard tab font/border tweak */
+
+/* v140 copy modal back arrow + backdrop close */
+
+/* v141 FatBot Selection: 30D metrics + 6M public HL portfolio charts; hide no live positions */
+
+/* v142 stable FatBot Selection refresh: last-good snapshot retention */
+
+/* v144 FatBot Vault builder: 10 slots, first 3 unlocked, Add to vault, min 3/max 10 traders */
+
+/* v145 inline FatBot Vault builder under slot with dropdown wallet selection */
+
+/* v146 vault builder input-only trader slots */
+
+/* v147 robust Add to vault CTA in FatBot Vaults panel */
+
+/* v148 locked vault slots: visible unlock text and stronger blur */
+
+/* v149 locked vault slot unlock text in one horizontal line */
+
+/* v150 locked vault slot text made visible across full row */
+
+/* v151 default live FatBot vault modal with stats/management tabs */
+
+/* v152 default vault modal renders immediately and wallet management has 7 placeholder members */
+
+/* v153 Wallet Management 30D chart previews */
+
+/* v154 default vault uses /api/fatbot-vaults live rows and backend attaches chart data */
+
+/* v155 fixed default vault modal render: removed undefined helpers and added safe fallback */
+
+/* v156 vault stats 3x3 grid identical to single wallet detail cards */
+
+/* v157 vault stats grid uses dedicated 3-column layout, not inherited detail-grid */
+
+/* v159 all FatBot Vault rows now open the unified vault modal; vault cards use 7D mini PnL chart instead of drift */
+
+/* v160 FatBot Vaults top-right panel swaps PnL Allocation for a looping How it Works walkthrough */
+
+/* v161 vault cards use pulsing status dot, vault live-price formatting improved, and Wallet Management gets Close Vault flow */
+
+/* v162 vault cards compacted into one row, closed vaults persist as hidden empty slots, and Liq formatting matches live price precision. */
+
+/* v164 removed preset FatBot Vault #2/#3 and replaced browser prompt with styled Close Vault dialog */
+
+/* v165 create-vault count uses visible vaults only, so hidden preset vaults do not block Start FatBot Vault. */
+
+/* v166 deletes preset FatBot Vault #2/#3 from DB/state and fixes vault create max/min to 3-10 traders. */
+
+/* v167 fixed create vault preview: no label-based deletion/filtering and immediate state upsert after activation. */
+
+/* v168 Close Vault dialog uses in-app two-click confirmation, no browser confirm. */
+
+/* v169 single copytrading rows open modal dialog; close copytrading uses same in-app withdraw confirmation flow. */
+
+/* v170 model single copy slot from 0x0baFb25EF191bFe7A2727E14F5BbfC36610EC62A */
+
+/* v171 model single copy slot always visible and rerenders from exact live FatBot vault data. */
+
+/* v172 unknown coin icons resolve through backend /api/token-icon/{coin} with override/CoinGecko/CryptoCompare fallback. */

@@ -74,7 +74,7 @@ _LEADERBOARD_SNAPSHOT_POOL_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_POOL_LIMI
 _LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT = int(os.getenv("LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT", "50"))
 _LEADERBOARD_SNAPSHOT_ENABLED = os.getenv("LEADERBOARD_SNAPSHOT_ENABLED", "true").lower() not in ("0", "false", "no", "off")
 _LEADERBOARD_SNAPSHOT_CATEGORIES = ["trades", "tradfi", "crypto", "bull", "bear", "fatbot_selection"]
-_LEADERBOARD_SNAPSHOT_VERSION = "v132-fatbot-audit"
+_LEADERBOARD_SNAPSHOT_VERSION = "v143-hl-rate-limit-fatbot-scan"
 
 
 
@@ -136,6 +136,19 @@ def _leaderboard_snapshot_rows_from_db(category: str) -> Tuple[Optional[Dict[str
 
 def _leaderboard_snapshot_write(category: str, rows: List[Dict[str, Any]], status: str = "ready", error: Optional[str] = None) -> None:
     category = str(category or "trades").lower()
+
+    # Extra safety for the manual FatBot section:
+    # never replace a non-empty last-good snapshot with an empty/partial scan.
+    if category == "fatbot_selection":
+        try:
+            _meta, _prev_rows = _leaderboard_snapshot_rows_from_db("fatbot_selection")
+            if _prev_rows and not rows:
+                rows = _fatbot_selection_merge_last_good_rows([])
+                status = "ready"
+                error = "protected_last_good_snapshot_empty_scan"
+        except Exception:
+            pass
+
     now = _leaderboard_snapshot_now()
     clean_rows = []
     for idx, row in enumerate(rows or [], start=1):
@@ -193,7 +206,7 @@ def _leaderboard_sort_pnl(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 
-def _leaderboard_snapshot_enrich_category_charts(rows: List[Dict[str, Any]], window: str = "30d") -> List[Dict[str, Any]]:
+def _leaderboard_snapshot_enrich_category_charts(rows: List[Dict[str, Any]], window: str = "30d", chart_window: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Ensure every final visible snapshot category row gets a mini chart when
     Hyperliquid portfolio history is available.
@@ -210,7 +223,7 @@ def _leaderboard_snapshot_enrich_category_charts(rows: List[Dict[str, Any]], win
     old_limit = os.environ.get("TOP_TRADERS_SPARKLINE_ENRICH_LIMIT")
     try:
         os.environ["TOP_TRADERS_SPARKLINE_ENRICH_LIMIT"] = str(max(len(rows), _LEADERBOARD_SNAPSHOT_VISIBLE_LIMIT))
-        enriched = _enrich_top_traders_pnl_sparkline([dict(r) for r in rows], {"window": window})
+        enriched = _enrich_top_traders_pnl_sparkline([dict(r) for r in rows], {"window": chart_window or window})
     finally:
         if old_limit is None:
             os.environ.pop("TOP_TRADERS_SPARKLINE_ENRICH_LIMIT", None)
@@ -232,7 +245,7 @@ def _leaderboard_snapshot_enrich_category_charts(rows: List[Dict[str, Any]], win
         if not address:
             return idx, row
         try:
-            updated = _attach_portfolio_chart_data(dict(row), address, {"window": window})
+            updated = _attach_portfolio_chart_data(dict(row), address, {"window": window, "chart_window": chart_window or window})
             return idx, updated
         except Exception as exc:
             row["snapshot_chart_fallback_status"] = f"error: {exc}"
@@ -343,6 +356,90 @@ def _fatbot_selection_apply_public_hl_fill_stats(row: Dict[str, Any], hl_client:
 
 
 
+
+def _fatbot_selection_merge_last_good_rows(new_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Stabilize manual FatBot Selection refreshes.
+
+    Public endpoints can intermittently return empty position/history data for
+    a wallet. A single bad scan must not erase a wallet or its chart from the
+    visible leaderboard. This merges the last good snapshot back for a short TTL.
+
+    Still respects the default rule that wallets without live positions are not
+    shown long-term: stale rows expire after FATBOT_SELECTION_LAST_GOOD_TTL_SECONDS.
+    """
+    try:
+        ttl = int(os.getenv("FATBOT_SELECTION_LAST_GOOD_TTL_SECONDS", "1800"))
+    except Exception:
+        ttl = 1800
+    ttl = max(0, ttl)
+
+    if ttl <= 0:
+        return new_rows or []
+
+    try:
+        meta, previous_rows = _leaderboard_snapshot_rows_from_db("fatbot_selection")
+    except Exception:
+        return new_rows or []
+
+    if not previous_rows:
+        return new_rows or []
+
+    now = _leaderboard_snapshot_now()
+    previous_by_address: Dict[str, Dict[str, Any]] = {}
+    for prev in previous_rows or []:
+        address = str(prev.get("address") or "").lower()
+        if not address:
+            continue
+        updated_at = float(prev.get("snapshot_updated_at") or (meta or {}).get("updated_at") or 0)
+        age = max(0.0, now - updated_at) if updated_at else 999999999.0
+        if age <= ttl:
+            previous_by_address[address] = dict(prev)
+
+    if not previous_by_address:
+        return new_rows or []
+
+    merged: List[Dict[str, Any]] = []
+    seen = set()
+
+    for row in new_rows or []:
+        item = dict(row or {})
+        address = str(item.get("address") or "").lower()
+        prev = previous_by_address.get(address)
+        if prev:
+            # Preserve last good chart if the current scan lost it.
+            for key in [
+                "pnl_sparkline",
+                "pnl_sparkline_window",
+                "pnl_sparkline_source",
+                "portfolio_chart_points",
+                "portfolio_chart_window",
+                "portfolio_chart_source",
+            ]:
+                if (not item.get(key)) and prev.get(key):
+                    item[key] = prev.get(key)
+
+            item["fatbot_selection_stability"] = "fresh_or_merged_chart"
+        else:
+            item["fatbot_selection_stability"] = "fresh"
+
+        merged.append(item)
+        if address:
+            seen.add(address)
+
+    for address, prev in previous_by_address.items():
+        if address in seen:
+            continue
+        item = dict(prev)
+        item["fatbot_selection_stability"] = "last_good_snapshot_retained"
+        item["fatbot_selection_last_good_retained"] = True
+        item["fatbot_selection_last_good_age_seconds"] = round(max(0.0, now - float(item.get("snapshot_updated_at") or 0)), 1)
+        merged.append(item)
+
+    return _leaderboard_sort_pnl(merged)
+
+
+
 def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
     """
     Manual FatBot Selection built from public Hyperliquid endpoints only.
@@ -396,10 +493,19 @@ def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
         })
 
     try:
-        workers = int(os.getenv("FATBOT_SELECTION_WORKERS", "10"))
+        workers = int(os.getenv("FATBOT_SELECTION_WORKERS", "2"))
     except Exception:
-        workers = 10
+        workers = 2
     workers = max(1, min(workers, len(base_rows)))
+
+    try:
+        shared_hl_client = HyperliquidClient()
+        shared_all_mids = shared_hl_client.all_mids()
+    except Exception as exc:
+        shared_all_mids = {}
+        shared_all_mids_error = str(exc)
+    else:
+        shared_all_mids_error = None
 
     def enrich_one(item: Dict[str, Any]) -> Dict[str, Any]:
         address = str(item.get("address") or "")
@@ -408,10 +514,9 @@ def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
 
         try:
             hl_client = HyperliquidClient()
-            try:
-                all_mids = hl_client.all_mids()
-            except Exception:
-                all_mids = {}
+            all_mids = shared_all_mids
+            if shared_all_mids_error:
+                item.setdefault("errors", []).append(f"all_mids_error: {shared_all_mids_error}")
 
             # Public current positions across main + relevant HIP-3/XYZ dexes.
             hl_state, positions, dex_status = _hyperliquid_positions_all_relevant_dexes(hl_client, address, all_mids=all_mids)
@@ -438,7 +543,8 @@ def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
                 if item.get("account_value"):
                     item["account_value_source"] = "hyperliquid_portfolio_fallback"
 
-            item = _attach_portfolio_chart_data(item, address, {"window": "30d"})
+            # FatBot Selection keeps leaderboard metrics at 30D, but chart history is 6M.
+            item = _attach_portfolio_chart_data(item, address, {"window": "30d", "chart_window": "6m"})
 
             account_value = float(item.get("account_value") or 0)
             total_pnl = float(item.get("total_pnl") or item.get("pnl_usd") or 0)
@@ -468,13 +574,19 @@ def _leaderboard_snapshot_build_fatbot_selection() -> List[Dict[str, Any]]:
     hidden_no_positions = 0
     for idx, enriched_item in enumerate(enriched):
         row = enriched_item if enriched_item is not None else base_rows[idx]
+        # Default FatBot Selection rule: never show manually supplied wallets
+        # without live open positions in this leaderboard.
         if int(row.get("open_positions") or 0) > 0 or bool(row.get("positions")):
             visible.append(row)
         else:
+            row["fatbot_selection_hidden_reason"] = "no_live_open_positions"
             hidden_no_positions += 1
 
     visible = _leaderboard_sort_pnl(visible)
-    visible = _leaderboard_snapshot_enrich_category_charts(visible, "30d")
+    visible = _leaderboard_snapshot_enrich_category_charts(visible, "30d", chart_window="6m")
+
+    # Do not let one flaky public-HL refresh erase wallets/charts from the custom section.
+    visible = _fatbot_selection_merge_last_good_rows(visible)
 
     for idx, row in enumerate(visible, start=1):
         row["rank"] = idx
@@ -545,7 +657,10 @@ def precompute_leaderboard_snapshots(force: bool = False) -> Dict[str, Any]:
         # Critical: after filtering into categories, enrich the final visible rows
         # again so mini charts are present in every category, not only in Top Trades.
         for category, rows in list(category_rows.items()):
-            category_rows[category] = _leaderboard_snapshot_enrich_category_charts(rows, "30d")
+            if category == "fatbot_selection":
+                category_rows[category] = _leaderboard_snapshot_enrich_category_charts(rows, "30d", chart_window="6m")
+            else:
+                category_rows[category] = _leaderboard_snapshot_enrich_category_charts(rows, "30d")
 
         for category, rows in category_rows.items():
             _leaderboard_snapshot_write(category, rows, status="ready", error=None)
@@ -1226,6 +1341,8 @@ def _portfolio_bucket_from_payload(payload: Any, window: str = "7d") -> Optional
         "1d": ("day", "1d"),
         "7d": ("week", "7d"),
         "30d": ("month", "30d"),
+        "6m": ("allTime", "all", "all_time"),
+        "180d": ("allTime", "all", "all_time"),
         "all": ("allTime", "all", "all_time"),
     }
     aliases = period_map.get(target, ("week", "7d"))
@@ -1291,6 +1408,13 @@ def _downsample(values: List[float], max_points: int = 20) -> List[float]:
 
 
 def _pnl_sparkline_from_portfolio_payload(payload: Any, window: str = "7d") -> List[float]:
+    if str(window or "").lower() in ("6m", "180d"):
+        points = _portfolio_chart_points_from_payload(payload, window)
+        values = [float(p.get("pnl_usd")) for p in points if isinstance(p, dict) and p.get("pnl_usd") is not None]
+        if len(values) >= 2:
+            return _downsample(values, int(os.getenv("TOP_TRADERS_SPARKLINE_MAX_POINTS", "24")))
+        return []
+
     bucket = _portfolio_bucket_from_payload(payload, window)
     if not isinstance(bucket, dict):
         return []
@@ -1310,6 +1434,7 @@ def _pnl_sparkline_from_portfolio_payload(payload: Any, window: str = "7d") -> L
         return []
 
     return _downsample(values, int(os.getenv("TOP_TRADERS_SPARKLINE_MAX_POINTS", "20")))
+
 
 
 def _history_point_ts(point: Any, fallback_index: int = 0) -> int:
@@ -1368,6 +1493,33 @@ def _parse_history_points(history: Any, keys: Tuple[str, ...]) -> List[Dict[str,
     return out
 
 
+
+def _filter_history_points_to_recent_days(points: List[Dict[str, Any]], days: int) -> List[Dict[str, Any]]:
+    """
+    Keep only recent time-based points when timestamps look like epoch ms/sec.
+    If the series uses index-like values, return it unchanged.
+
+    Hyperliquid portfolio allTime buckets are used for 6M charts, then trimmed
+    locally to avoid inventing unsupported endpoint parameters.
+    """
+    if not points or days <= 0:
+        return points
+
+    ts_values = [int(p.get("ts") or 0) for p in points if isinstance(p, dict)]
+    epoch_like = [ts for ts in ts_values if ts > 1000000000]
+    if len(epoch_like) < 2:
+        return points
+
+    max_ts = max(epoch_like)
+    # Detect milliseconds vs seconds.
+    window_ms = int(days * 24 * 60 * 60 * 1000)
+    cutoff = max_ts - window_ms if max_ts > 100000000000 else max_ts - int(days * 24 * 60 * 60)
+
+    filtered = [p for p in points if int(p.get("ts") or 0) >= cutoff]
+    return filtered if len(filtered) >= 2 else points
+
+
+
 def _nearest_value_by_ts(points: List[Dict[str, Any]], ts: int, fallback_index: int = 0) -> Optional[float]:
     if not points:
         return None
@@ -1413,6 +1565,10 @@ def _portfolio_chart_points_from_payload(payload: Any, window: str = "7d") -> Li
         av_history,
         ("accountValue", "account_value", "value", "y", "equity", "accountEquity"),
     )
+
+    if str(window or "").lower() in ("6m", "180d"):
+        pnl_points = _filter_history_points_to_recent_days(pnl_points, 180)
+        av_points = _filter_history_points_to_recent_days(av_points, 180)
 
     if len(pnl_points) < 2 and len(av_points) < 2:
         return []
@@ -1464,7 +1620,11 @@ def _attach_portfolio_chart_data(item: Dict[str, Any], address: str, filters: Di
     if item.get("portfolio_chart_points"):
         return item
 
-    window = "1d" if str(filters.get("window") or "").lower() == "1d" else "7d"
+    requested_chart_window = str(filters.get("chart_window") or filters.get("portfolio_chart_window") or "").lower()
+    if requested_chart_window in ("6m", "180d"):
+        window = "6m"
+    else:
+        window = "1d" if str(filters.get("window") or "").lower() == "1d" else "30d"
 
     try:
         hl_client = HyperliquidClient()
@@ -1500,7 +1660,7 @@ def _enrich_top_traders_pnl_sparkline(rows: List[Dict[str, Any]], filters: Dict[
     if not enabled or not rows:
         return rows
 
-    window = "1d" if str(filters.get("window") or "").lower() == "1d" else "7d"
+    window = "1d" if str(filters.get("window") or "").lower() == "1d" else "30d"
 
     try:
         enrich_limit = int(os.getenv("TOP_TRADERS_SPARKLINE_ENRICH_LIMIT", "50"))
@@ -2060,6 +2220,19 @@ def list_fatbot_vaults(
         }
 
         base = _enrich_with_hyperliquid_live_stats(base, address, window=filters["window"])
+
+        # v154: FatBot Vault rows must carry real portfolio chart data.
+        # The vault popup uses /api/fatbot-vaults as its source of truth, not /api/traders,
+        # so attach the same chart fields here.
+        base = _attach_portfolio_chart_data(base, address, {"window": filters["window"]})
+        if base.get("portfolio_chart_points") and not base.get("pnl_sparkline"):
+            base["pnl_sparkline"] = [
+                float(p.get("pnl_usd")) for p in base.get("portfolio_chart_points", [])
+                if isinstance(p, dict) and p.get("pnl_usd") is not None
+            ]
+            base["pnl_sparkline_window"] = base.get("portfolio_chart_window") or filters["window"]
+            base["pnl_sparkline_source"] = "hyperliquid_portfolio_pnlHistory"
+
         out.append(base)
 
     out = _apply_local_leaderboard_filters(out, filters)
@@ -2665,7 +2838,7 @@ def _hyperliquid_positions_all_relevant_dexes(hl_client: HyperliquidClient, addr
         except Exception as exc:
             return dex_name, None, [], str(exc)
 
-    workers = min(len(dexes), int(os.getenv("PROFILE_DEX_WORKERS", "6")))
+    workers = min(len(dexes), int(os.getenv("PROFILE_DEX_WORKERS", "1")))
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
         future_map = {executor.submit(fetch_one, dex_name): dex_name for dex_name in dexes}
         for future in as_completed(future_map):
@@ -2826,6 +2999,12 @@ def _extract_positions_from_state(state: Dict[str, Any], all_mids: Optional[Dict
 
     return rows
 
+
+
+def _delete_removed_preset_vaults(db: sqlite3.Connection):
+    # v167: no-op. Do not delete vaults by label.
+    # Slot labels such as FatBot Vault #2 / #3 are valid for newly created user vaults.
+    return
 
 
 def list_wallets() -> List[Dict[str, Any]]:
@@ -3011,10 +3190,10 @@ def create_pool(name: str, trader_addresses: List[str], multiplier: float) -> Di
         if addr and addr not in clean_addresses:
             clean_addresses.append(addr)
 
-    if len(clean_addresses) < 2:
-        raise ValueError("Multi copytrading requires at least 2 wallets")
-    if len(clean_addresses) > 5:
-        clean_addresses = clean_addresses[:5]
+    if len(clean_addresses) < 3:
+        raise ValueError("FatBot Vault requires at least 3 trader wallets")
+    if len(clean_addresses) > 10:
+        clean_addresses = clean_addresses[:10]
 
     weight = round(100 / len(clean_addresses), 2)
     address = make_wallet_address()

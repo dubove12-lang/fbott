@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +13,9 @@ class HyperliquidError(RuntimeError):
 
 
 _ALL_MIDS_CACHE: Dict[str, Any] = {"ts": 0.0, "data": {}}
+
+_HL_RATE_LOCK = threading.Lock()
+_HL_LAST_REQUEST_TS = 0.0
 
 _HTTP_SESSION = requests.Session()
 _HTTP_ADAPTER = HTTPAdapter(
@@ -41,20 +45,56 @@ class HyperliquidClient:
         self.read_timeout = float(os.getenv("HYPERLIQUID_READ_TIMEOUT", str(self.timeout)))
 
     def post_info(self, payload: Dict[str, Any]) -> Any:
-        response = _HTTP_SESSION.post(
-            self.base_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=(self.connect_timeout, self.read_timeout),
-        )
+        global _HL_LAST_REQUEST_TS
 
-        if response.status_code >= 400:
-            raise HyperliquidError(f"Hyperliquid {response.status_code}: {response.text[:500]}")
+        max_retries = int(os.getenv("HYPERLIQUID_MAX_RETRIES", "4"))
+        base_backoff = float(os.getenv("HYPERLIQUID_RETRY_BACKOFF_SECONDS", "0.75"))
+        min_interval = float(os.getenv("HYPERLIQUID_MIN_REQUEST_INTERVAL_SECONDS", "0.10"))
 
-        try:
-            return response.json()
-        except Exception as exc:
-            raise HyperliquidError(f"Hyperliquid returned non-JSON response: {exc}") from exc
+        last_error_text = ""
+        for attempt in range(max(1, max_retries + 1)):
+            if min_interval > 0:
+                with _HL_RATE_LOCK:
+                    now = time.time()
+                    wait = min_interval - (now - _HL_LAST_REQUEST_TS)
+                    if wait > 0:
+                        time.sleep(wait)
+                    _HL_LAST_REQUEST_TS = time.time()
+
+            try:
+                response = _HTTP_SESSION.post(
+                    self.base_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=(self.connect_timeout, self.read_timeout),
+                )
+            except requests.RequestException as exc:
+                last_error_text = str(exc)
+                if attempt >= max_retries:
+                    raise HyperliquidError(f"Hyperliquid request failed: {exc}") from exc
+                time.sleep(base_backoff * (attempt + 1))
+                continue
+
+            if response.status_code in (429, 500, 502, 503, 504):
+                last_error_text = f"Hyperliquid {response.status_code}: {response.text[:500]}"
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    retry_wait = float(retry_after) if retry_after else base_backoff * (attempt + 1)
+                except Exception:
+                    retry_wait = base_backoff * (attempt + 1)
+                if attempt < max_retries:
+                    time.sleep(max(retry_wait, min_interval))
+                    continue
+
+            if response.status_code >= 400:
+                raise HyperliquidError(f"Hyperliquid {response.status_code}: {response.text[:500]}")
+
+            try:
+                return response.json()
+            except Exception as exc:
+                raise HyperliquidError(f"Hyperliquid returned non-JSON response: {exc}") from exc
+
+        raise HyperliquidError(last_error_text or "Hyperliquid request failed")
 
     def clearinghouse_state(self, user: str, dex: Optional[str] = None) -> Optional[Dict[str, Any]]:
         payload: Dict[str, Any] = {"type": "clearinghouseState", "user": user}

@@ -1761,3 +1761,419 @@ It returns every manual FatBot Selection wallet with:
 - errors
 
 Use this to identify exactly why a wallet with real open positions is being missed by the backend scan.
+
+
+## v133 Wallet aliases, Hypurrscan links, 30D labels, profile modal close
+Changes:
+- Leaderboard rows now have a pencil icon to rename any wallet locally in the browser.
+- Leaderboard rows now have a Hypurrscan redirect icon using dynamic address URLs:
+  `https://hypurrscan.io/address/<address>#more`
+- Leaderboard metric labels for PnL / Volume / Win Rate are fixed as 30D.
+- The leaderboard API query is forced to `window=30d` and `sortBy=totalPnl`.
+- FatBot Selection shows the "Longterm profitable" label above the leaderboard title when that tab is active.
+- Trader profile modal no longer shows the top-right X.
+- Trader profile modal now has a top-left back arrow.
+- Clicking outside the trader profile modal closes it.
+
+
+## v134 Redirect icon + Longterm profitable fix
+Fixes:
+- Redirect icon is now an external-link SVG icon, matching the requested visual style.
+- `Longterm profitable` display for active FatBot Selection is now controlled with inline `style.display`, not only the `.hidden` class, so it reliably appears above the PnL Leaderboard title when FatBot Selection is active.
+
+
+## v135 Profile wallet actions
+Adds the same wallet actions to the trader profile modal:
+- pencil icon to rename the wallet nickname locally;
+- external-link icon to open the wallet on Hypurrscan;
+- dynamic Hypurrscan URL based on the opened wallet address.
+
+
+## v136 FatBot tab badge + 30D charts
+Changes:
+- `Longterm profitable` is now displayed inside the active `Top FatBot Selection` tab, on the right side.
+- Removed the old label above the `PnL Leaderboard` title.
+- Leaderboard/profile chart logic now uses the 30D/month portfolio bucket when the leaderboard is on 30D.
+- Labels changed from 7D wallet history / 7D PnL to 30D wallet history / 30D PnL.
+- Snapshot version bumped to rebuild cached chart rows.
+
+
+## v137 Copy Wallet modal redesign
+Changes direct `Copy Wallet` modal:
+- Top section shows the selected wallet 30D PnL chart.
+- Shows selected wallet address/name only; removed selecting another leaderboard wallet and custom wallet override.
+- Wallet name input moved near the selected wallet address.
+- Shows Account Value, 30D PnL, and Gross Exposure metrics.
+- Keeps exposure multiplier and max drawdown controls.
+- Shows Cross margin as fixed/non-editable.
+- CTA changed to `Create and fund copytrading wallet`.
+
+
+## v138 Copy modal tweaks
+Changes:
+- Direct Copy Wallet modal now starts with the 30D PnL chart; removed the visible top `Create Copytrading Wallet / Copying...` header for this flow.
+- Hypurrscan external-link icon moved next to `COPY SOURCE`.
+- `Name wallet` changed to `Copytrading name`.
+- Placeholder changed to `Name your copytrading strategy`.
+- Other copy settings remain unchanged.
+
+
+## v139 Multiplier wording + top tab readability
+Changes:
+- `Copy multiplier` renamed to `Gross exposure multiplier`.
+- Leaderboard top category menu has reduced inner padding/gaps and slightly larger tab font.
+- FatBot Selection badge spacing tightened so the tab text has more room.
+
+
+## v140 Copy modal close behavior
+Changes:
+- Copy Wallet modal no longer uses the top-right X close button.
+- Copy Wallet modal now has a top-left back arrow.
+- Clicking outside the Copy Wallet modal closes it.
+
+
+## v141 FatBot Selection 6M graphs
+Changes:
+- FatBot Selection keeps main leaderboard metrics at 30D:
+  - 30D PnL
+  - 30D Volume
+  - 30D Win Rate
+  - live Gross Exposure
+- FatBot Selection chart history is now 6M.
+- 6M chart data is built from public Hyperliquid `portfolio` allTime history and trimmed locally to the last 180 days.
+- Wallets without live open positions are explicitly hidden from FatBot Selection even if manually supplied.
+- Old snapshot rows are invalidated via snapshot version bump.
+
+Hyperliquid public endpoints used:
+- `clearinghouseState` for live positions/account value/exposure.
+- `portfolio` for pnlHistory/accountValueHistory.
+- `userFillsByTime` fallback remains for 30D volume/trades/win-rate where available.
+
+
+## v142 Stable FatBot Selection refresh
+Fixes refresh flicker in the custom manual FatBot Selection section.
+
+Problem:
+- Public Hyperliquid endpoints can intermittently return empty/missing position or portfolio-history data.
+- Previous versions replaced the whole snapshot on every refresh, so the visible wallet count and mini charts could change every 2 minutes.
+
+v142 behavior:
+- Main FatBot Selection metrics remain 30D.
+- FatBot Selection chart remains 6M.
+- Wallets with no live open positions are still hidden by default.
+- But one bad scan no longer deletes a previously-good wallet/chart.
+- Last-good FatBot rows are retained for `FATBOT_SELECTION_LAST_GOOD_TTL_SECONDS`, default 1800 seconds / 30 minutes.
+- If a current scan loses a chart but the previous snapshot had it, the chart is preserved.
+- If a current scan returns empty while a previous snapshot exists, the previous snapshot is protected.
+
+Optional env:
+- `FATBOT_SELECTION_LAST_GOOD_TTL_SECONDS=1800`
+- Set to `0` to disable last-good retention.
+
+
+## v143 Hyperliquid 429 protection for FatBot Selection
+Fixes the audit/snapshot issue where every manual wallet could be excluded because Hyperliquid returned `429` for both `main` and `xyz`.
+
+Changes:
+- Hyperliquid public client now has a global request throttle.
+- Hyperliquid public client retries 429/5xx with backoff.
+- FatBot Selection default scan workers reduced from 10 to 2.
+- Per-wallet dex scan default workers reduced from 6 to 1.
+- `allMids` is fetched once per FatBot Selection build instead of once per wallet.
+- FatBot Selection still keeps 30D metrics and 6M charts.
+- Wallets without live positions remain hidden, but 429 no longer immediately turns every wallet into "no positions" as easily.
+
+Optional env tuning:
+- `HYPERLIQUID_MIN_REQUEST_INTERVAL_SECONDS=0.10`
+- `HYPERLIQUID_MAX_RETRIES=4`
+- `HYPERLIQUID_RETRY_BACKOFF_SECONDS=0.75`
+- `FATBOT_SELECTION_WORKERS=2`
+- `PROFILE_DEX_WORKERS=1`
+
+
+## v144 FatBot Vault builder
+Work is focused on the FatBot Vaults category/view.
+
+Changes:
+- Leaderboard row CTA becomes `Add to vault` when the app is in FatBot Vaults view.
+- Clicking `Add to vault` adds the wallet to the first free trader slot in the open vault builder.
+- If the vault builder is not open, it opens the first free unlocked FatBot Vault slot and inserts the trader.
+- Right-side FatBot Vault area now shows 10 slots.
+- First 3 vault slots are unlocked.
+- Slots 4–10 are blurred/locked:
+  - slot 4 requires 100,000 USD Perps volume
+  - slot 5 requires 200,000 USD Perps volume
+  - each next slot adds 100,000 USD
+- Clicking an unlocked empty vault slot opens the FatBot Vault builder.
+- Builder step 1:
+  - manual wallet slots
+  - min 3 traders
+  - max 10 traders
+  - `add trader slot` button adds another trader input
+- Builder step 2:
+  - drawdown
+  - Vault exposure multiplier
+  - Cross fixed info
+- Final CTA: `Create and fund vault address`.
+
+
+## v145 Inline FatBot Vault builder
+Adjusts the v144 vault builder to match the requested UX:
+- Empty FatBot Vault slots no longer open a modal.
+- Clicking an unlocked free vault slot expands an inline setup panel directly under that slot.
+- Wallet adding uses dropdowns populated from the left leaderboard plus manual 0x input.
+- `Add to vault` from the left leaderboard inserts into the first free inline trader slot.
+- Locked slots now show visible lock text and blur/backdrop styling:
+  `Reach X USD Perps volume to unlock this slot.`
+
+
+## v146 Vault input-only trader slots
+Changes:
+- Removed the dropdown selector from FatBot Vault trader slots.
+- Each trader slot is now a single empty input.
+- Placeholder: `Pick wallet from leaderboard or paste your own`.
+- `Add to vault` from the left leaderboard still fills the first free input slot.
+
+
+## v147 Add to vault CTA fix
+Fix:
+- Leaderboard CTA now robustly shows `Add to vault` whenever the FatBot Vaults right panel is active/visible.
+- Click behavior also uses the same robust vault-add mode and inserts the wallet into the first free vault input.
+
+
+## v148 Locked vault slots
+Fix:
+- Locked FatBot Vault slots now show visible text.
+- Text format uses `Reach 100 000 USD Perps volume to unlock this slot.`
+- Each following locked slot increases by 100 000 USD.
+- Blur/backdrop overlay is stronger while the unlock text stays readable.
+
+
+## v149 Locked slot single-line text
+Fix:
+- Locked FatBot Vault slot unlock text is now one horizontal line across the slot.
+- Removed the extra `Locked Vault Slot` label from the visible message.
+- Keeps slot number + lock icon on the left.
+
+
+## v150 Locked slot visible text
+Fix:
+- Locked vault slot text is no longer inside a narrow `small` element.
+- Text is displayed directly in the flex row and spans the available slot width.
+- Keeps slot number and lock icon on the left.
+
+
+## v151 Default live FatBot Vault
+Adds a default live vault in the FatBot Vaults section.
+
+Default vault address:
+- `0x0baFb25EF191bFe7A2727E14F5BbfC36610EC62A`
+
+Behavior:
+- The default vault is injected as the first FatBot Vault slot in the right panel.
+- Its row uses live data from the existing FatBot Vault / Hyperliquid profile pipeline.
+- Clicking this vault opens a modal based on the single-wallet profile modal:
+  - VAULT STATS tab: portfolio chart, metrics, and live positions.
+  - WALLET MANAGEMENT tab: quick leaderboard-like rows for saved member wallets.
+- Wallet Management:
+  - remove wallet with trash icon and confirmation dialog;
+  - add wallet by 0x address;
+  - Save settings stores member wallet settings in browser localStorage.
+
+
+## v152 Default vault modal speed + placeholders
+Fix:
+- Default vault popup no longer stays on `Loading live vault data...`.
+- It renders immediately from the already-loaded FatBot Vault leaderboard row.
+- It refreshes the full live profile in the background with a timeout, so slow/429 public API calls do not block the UI.
+- Wallet Management now preloads 7 placeholder wallets from the current leaderboard when no saved members exist.
+- Placeholder wallet members are saved in localStorage and can be removed/edited through Wallet Management.
+
+
+## v153 Wallet Management chart previews
+Change:
+- Wallet Management rows now include a `30D Chart` mini PnL sparkline preview, same source as the leaderboard row.
+- Placeholder members pulled from the leaderboard show their existing 30D chart when available.
+
+
+## v154 Default vault live data + charts fix
+Fix:
+- The default vault modal no longer tries to load the vault through `/api/traders/{address}`.
+- It now refreshes from `/api/fatbot-vaults`, which is the correct source for platform FatBot Vault rows.
+- Backend `list_fatbot_vaults` now attaches real Hyperliquid portfolio chart data to vault rows.
+- VAULT STATS renders immediately from cached row data, then updates from `/api/fatbot-vaults`.
+- If chart data is not yet ready, the modal shows a chart-loading placeholder instead of staying stuck.
+- Wallet Management can also receive `Add to vault` directly while the management tab is open.
+
+
+## v155 Default vault modal render fix
+Fix:
+- Removed undefined frontend helper calls inside the default vault modal (`tradesDisplay`, `accountAgeDisplay`) that could leave the modal stuck on the loading card.
+- `renderDefaultVaultModalContent()` is now wrapped in a safe fallback so a widget error cannot leave an infinite spinner.
+- VAULT STATS uses the same existing dashboard display helpers as the normal wallet/profile detail:
+  - `profileChartsHtml`
+  - `pnlUsdValue`
+  - `moneyOrDash`
+  - `grossExposureDisplay`
+  - live positions list rendering
+- If portfolio chart points are missing but the leaderboard row has a sparkline, the modal creates a chart fallback from that sparkline.
+
+
+## v156 Vault Stats 3x3 metrics grid
+Change:
+- VAULT STATS metric cards are now displayed as 9 cards in 3 rows x 3 columns, matching the single wallet profile layout.
+- Includes:
+  - PnL Window (30D)
+  - Account Value
+  - Long / Short
+  - Gross Exposure
+  - 30D Win Rate
+  - 30D Trades
+  - Account Age
+  - 30D Volume
+  - Live Positions
+
+
+## v157 Vault Stats forced 3-column grid
+Fix:
+- VAULT STATS cards no longer inherit the older `.detail-grid` two-column rules.
+- Cards use a dedicated `.vault-stats-grid-3x3` grid.
+- Forced layout: 3 columns x 3 rows on desktop.
+
+
+## v158 Default vault modal unified size
+- Wallet Management tab now keeps the same large modal footprint as Vault Stats.
+- Added a dedicated `default-vault-modal-card` class on the trader modal while the default vault modal is open.
+- Added a desktop `min-height` to `#defaultVaultModalBody` so the two tabs keep a unified visual flow.
+
+
+## v159 Vault cards: unified modal + 7D mini chart
+- All filled FatBot Vault rows on the right now open the same unified vault modal flow instead of using inline dropdown expansion.
+- Replaced the `Drift` column on FatBot Vault rows with a mini PnL sparkline chart (7D-first fallback).
+- Wallet Management now works generically for any opened FatBot Vault modal and stores custom member edits locally per vault.
+
+
+## v160 FatBot Vaults top-right How it Works section
+- On the FatBot Vaults main view, the top-right PnL Allocation card is replaced with a looping How it Works section.
+- It rotates 5 steps in a 3-second loop.
+- Regular Copytrading view still shows the original PnL Allocation card.
+
+
+## v161 vault status / price / close flow polish
+- FatBot Vault cards now use a **pulsing green dot** instead of a wide ACTIVE pill, so the row fits better.
+- In Vault Stats, **Live Price** values are formatted with cleaner decimal precision.
+- In Vault Modal → **Wallet Management**, there is now a red **Close Vault** button.
+- Clicking **Close Vault** opens the required browser input prompt for the withdraw wallet, then a confirmation step.
+
+
+## v162 FatBot Vault compact row / close / Liq formatting
+- FatBot Vault leaderboard rows were compacted so the green status dot stays **in the same single row**.
+- Closing a vault now **removes it from My Vaults** and leaves an **empty slot** in the portfolio area.
+- Vault modal position rows now format **Liq** with the same decimal precision cleanup as Live Price.
+
+
+## v163 FatBot Vault single-row layout fix
+- Restored the richer FatBot Vault row appearance closer to the previous version.
+- Fixed the vault card row so **all elements stay in one single row** by using the correct 8-column grid:
+  slot index, logo, label, value, total pnl, exposure, 7D chart, status dot.
+- Kept v162 behavior improvements: close vault clears the slot, and Liq uses cleaned decimal formatting.
+
+
+## v164 Remove extra preset vaults + styled Close Vault dialog
+- `FatBot Vault #2` and `FatBot Vault #3` are hidden from the FatBot Vaults portfolio.
+- Closing a vault now uses a styled in-app dialog instead of browser prompt/confirm as the first step.
+- Close Vault flow:
+  1. Click `Close Vault`.
+  2. Enter withdraw wallet address.
+  3. Click `Close Vault`.
+  4. Confirm the final close action.
+- Confirmed close still removes the vault from My Vaults and leaves an empty slot.
+
+
+## v165 Create vault after hidden presets
+Fix:
+- Hidden preset vaults `FatBot Vault #2` and `FatBot Vault #3` no longer count against the first 3 unlocked vault slots.
+- `Start FatBot Vault` / `Create and fund vault address` now checks only visible usable vaults.
+- Create flow now shows a real error if `/api/pools` does not return `wallet_id`, instead of silently doing nothing.
+
+
+## v166 Delete preset vaults + fix Create Vault
+Fix:
+- `FatBot Vault #2` and `FatBot Vault #3` are no longer only hidden in the UI.
+- The frontend removes them from state and calls DELETE for them if they still exist.
+- The backend `list_wallets()` also purges those two old preset/demo vault wallets and their pool rows from SQLite.
+- Create Vault now supports the requested `min 3 / max 10` trader wallets end-to-end:
+  - frontend validation already had min 3 / max 10;
+  - backend schema changed from max 5 to max 10;
+  - backend service changed from min 2 / max 5 to min 3 / max 10.
+- Added a confirmation alert after successful vault creation.
+
+
+## v167 Create Vault preview fix
+Critical fix:
+- Removed label-based deletion/filtering of `FatBot Vault #2` / `FatBot Vault #3`.
+- Those labels are valid for newly created vaults, so v166 could create a vault and immediately filter/delete it from the preview.
+- After successful `/api/pools` + activation, the created wallet is now inserted directly into frontend state and rendered immediately before the backend refresh.
+- Result: newly created vault appears in the FatBot Vaults preview right away.
+
+
+## v168 Close Vault dialog confirmation fix
+Fix:
+- Removed browser `window.confirm()` from Close Vault because it could appear blocked/hidden and make the button look dead.
+- Close Vault now uses an in-app two-click flow:
+  1. Enter withdraw wallet.
+  2. Click `Close Vault`.
+  3. Dialog changes to final confirmation state.
+  4. Click `Confirm Close Vault`.
+- Closed vault is removed immediately from frontend state and the slot becomes empty.
+
+
+## v169 Single Copytrading modal flow
+Change:
+- Single Copytrading wallet rows no longer open inline/dropdown details.
+- Clicking any existing single copy wallet opens a modal dialog.
+- Modal includes:
+  - wallet value / available / realized PnL / unrealized PnL / gross exposure / drift;
+  - open positions;
+  - `Close Copytrading` action.
+- `Close Copytrading` uses the same in-app two-step withdraw confirmation flow as Close Vault:
+  1. enter withdraw wallet;
+  2. click `Close Copytrading`;
+  3. confirm with `Confirm Close Copytrading`.
+- On final confirm, wallet is deleted and immediately removed from the My Copytrading preview, leaving an empty slot.
+
+
+## v170 Model Single Copy slot
+Change:
+- Added one model Single Copytrading slot in the Copytrading view.
+- Source wallet:
+  - `0x0baFb25EF191bFe7A2727E14F5BbfC36610EC62A`
+- The model slot uses available live/cached data from the existing FatBot Vault / trader data pipeline.
+- It appears as `Model Single Copy` and has a `MODEL` badge.
+- Clicking it opens the same Single Copytrading modal from v169, with visible metrics and positions.
+- Closing the model single slot hides it locally and leaves an empty slot, without calling backend delete.
+
+
+## v171 Model Single live data fix
+Fix:
+- The model Single Copy slot is now always visible, even if older localStorage had hidden it.
+- It no longer shows fake fallback values.
+- It uses the exact FatBot Vault live row for:
+  - `0x0baFb25EF191bFe7A2727E14F5BbfC36610EC62A`
+- When `/api/fatbot-vaults` finishes loading, the single preview rerenders with live values/positions.
+- Opening the model single modal also refreshes `/api/fatbot-vaults` in the background and updates the modal.
+
+
+## v172 Token icon resolver
+Change:
+- Unknown coin icons now use a backend resolver instead of only local frontend mappings.
+- New endpoints:
+  - `GET /api/token-icon/{coin}` redirects to the best icon URL.
+  - `GET /api/token-icons?coins=BTC,ETH,SOL` returns resolver metadata for multiple coins.
+- Resolver priority:
+  1. local/manual overrides for Hyperliquid + common tickers;
+  2. CoinGecko search by symbol;
+  3. k-prefix fallback, e.g. `kPEPE -> PEPE`;
+  4. CryptoCompare coin list fallback;
+  5. frontend ticker badge fallback if no icon is found.
+- Results are cached in backend memory for 7 days to avoid heavy API calls.

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FatBot Copytrading MVP</title>
-  <link rel="stylesheet" href="/static/styles.css?v=132" />
+  <link rel="stylesheet" href="/static/styles.css?v=172" />
 </head>
 <body>
   <header class="topbar">
@@ -90,7 +90,7 @@
           <button class="leader-tab" data-leader-tab="crypto">Top Crypto</button>
           <button class="leader-tab" data-leader-tab="bull">Top Bull</button>
           <button class="leader-tab" data-leader-tab="bear">Top Bears</button>
-          <button class="leader-tab" data-leader-tab="fatbot_selection">Top FatBot Selection</button>
+          <button class="leader-tab fatbot-selection-tab" data-leader-tab="fatbot_selection"><span>Top FatBot Selection</span><em class="leader-tab-badge">Longterm profitable</em></button>
           <button class="leader-tab" data-leader-tab="favourite">Favourite</button>
         </div>
 
@@ -101,20 +101,7 @@
     </section>
 
     <section class="middle-col">
-      <div class="panel allocation-panel">
-        <div class="panel-head small">
-          <h2>PnL Allocation</h2>
-          <span class="pill">DEMO</span>
-        </div>
-        <div class="donut-wrap">
-          <div class="donut"><span id="allocPct">48%</span></div>
-          <div class="legend">
-            <div><i class="dot purple"></i><span>Single Trader Copy</span><strong id="allocSingle">$0.00</strong></div>
-            <div><i class="dot yellow"></i><span>Multi Copy</span><strong id="allocPool">$0.00</strong></div>
-            <div><i class="dot green"></i><span>Available</span><strong id="allocAvailable">$0.00</strong></div>
-          </div>
-        </div>
-      </div>
+      <div id="topInfoPanel" class="panel allocation-panel"></div>
 
       <div class="metrics-panel">
         <div class="metric-card">
@@ -186,15 +173,14 @@
   </main>
 
   <div id="traderModal" class="modal hidden">
-    <div class="modal-card large">
-      <button class="modal-close" data-close="traderModal">×</button>
+    <div class="modal-card large trader-modal-card">
       <div id="traderModalContent"></div>
     </div>
   </div>
 
   <div id="copyModal" class="modal hidden">
-    <div class="modal-card">
-      <button class="modal-close" data-close="copyModal">×</button>
+    <div class="modal-card copy-modal-card">
+      <button class="modal-back-arrow" data-close="copyModal" title="Back">←</button>
       <div class="wizard-head">
         <span class="pill">COPYTRADING WALLET</span>
         <h2>Create Copy Wallet</h2>
@@ -208,6 +194,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=132"></script>
+  <script src="/static/app.js?v=172"></script>
 </body>
 </html>

@@ -2528,3 +2528,1142 @@ button[data-close="traderModal"] {
     padding: 6px;
   }
 }
+
+
+/* v133 wallet aliases + actions */
+.wallet-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.wallet-display-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wallet-icon-btn {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.07);
+  color: #d8d0e7;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+}
+.wallet-icon-btn:hover {
+  background: rgba(139,93,255,.34);
+  color: #fff;
+}
+.wallet-link-btn {
+  font-size: 13px;
+}
+.fatbot-selection-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(32,228,151,.14);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.trader-modal-card {
+  padding-top: 62px;
+}
+.profile-back-btn {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.07);
+  color: #fff;
+  font-size: 23px;
+  font-weight: 950;
+  cursor: pointer;
+}
+.profile-back-btn:hover {
+  background: rgba(139,93,255,.36);
+}
+.with-back-button {
+  margin-top: 0;
+}
+
+
+/* v134 exact external-link redirect icon */
+.wallet-link-btn {
+  font-size: 0;
+}
+.external-link-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.external-link-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fatbot-selection-eyebrow {
+  display: none;
+}
+
+
+/* v135 profile wallet actions */
+.profile-wallet-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.profile-wallet-title-row h2 {
+  max-width: min(520px, 56vw);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-wallet-action {
+  transform: translateY(1px);
+}
+
+
+/* v136 FatBot Selection tab badge */
+.fatbot-selection-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  overflow: hidden;
+}
+.leader-tab-badge {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  max-width: 112px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(32,228,151,.16);
+  color: #20e497;
+  border: 1px solid rgba(32,228,151,.30);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 950;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.fatbot-selection-tab.active .leader-tab-badge {
+  display: inline-flex;
+}
+.fatbot-selection-tab.active {
+  justify-content: space-between;
+  padding-left: 18px;
+  padding-right: 10px;
+}
+@media (max-width: 900px) {
+  .leader-tab-badge {
+    display: none !important;
+  }
+}
+
+
+/* v137 direct copy wallet modal redesign */
+.single-copy-redesign {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.copy-source-chart-card {
+  border-radius: 22px;
+  border: 1px solid rgba(255,255,255,.07);
+  background: rgba(255,255,255,.035);
+  padding: 14px;
+  overflow: hidden;
+}
+.copy-source-chart-card.empty {
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+}
+.copy-source-chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.copy-source-chart-head h3 {
+  margin: 8px 0 2px;
+}
+.copy-source-chart-head p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+.copy-source-chart-body .profile-chart-active-head {
+  margin-bottom: 4px;
+}
+.copy-source-chart-body .profile-chart-active-head h3,
+.copy-source-chart-body .profile-chart-active-head p,
+.copy-source-chart-body .profile-chart-foot {
+  display: none;
+}
+.copy-source-chart-body .profile-line-chart {
+  height: 170px;
+  min-height: 170px;
+}
+.copy-source-address-card {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(220px, 1fr);
+  gap: 14px;
+  align-items: end;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.035);
+  padding: 14px;
+}
+.copy-source-address-card h3 {
+  margin: 8px 0 2px;
+}
+.copy-source-address-card p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 750;
+}
+.copy-wallet-name-row {
+  margin: 0;
+}
+.copy-source-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.copy-settings-block {
+  border-radius: 22px;
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.025);
+  padding: 16px;
+}
+.copy-settings-block h3 {
+  margin: 0 0 14px;
+}
+.copy-settings-block .readonly-info-row {
+  margin-top: 14px;
+}
+#copyModal .wizard-actions {
+  align-items: center;
+}
+#copyModal #wizardNext {
+  min-width: 250px;
+}
+@media (max-width: 720px) {
+  .copy-source-address-card,
+  .copy-source-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v138 direct Copy Wallet modal tweaks */
+#copyModal.direct-copy-modal .wizard-head {
+  display: none;
+}
+#copyModal.direct-copy-modal .modal-card {
+  padding-top: 48px;
+}
+.copy-source-pill-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.copy-source-pill-row .wallet-icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+
+/* v139 leaderboard tab readability */
+.leaderboard-tabs.category-tabs {
+  padding: 3px;
+  gap: 4px;
+}
+.leader-tab {
+  height: 34px;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.fatbot-selection-tab.active {
+  padding-left: 14px;
+  padding-right: 7px;
+}
+.leader-tab-badge {
+  max-width: 96px;
+  padding: 2px 5px;
+  font-size: 8px;
+  letter-spacing: 0;
+}
+
+
+/* v140 Copy modal back arrow + backdrop close */
+.copy-modal-card {
+  padding-top: 58px;
+}
+.modal-back-arrow {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.07);
+  color: #fff;
+  font-size: 23px;
+  font-weight: 950;
+  cursor: pointer;
+}
+.modal-back-arrow:hover {
+  background: rgba(139,93,255,.36);
+}
+#copyModal.direct-copy-modal .modal-card {
+  padding-top: 58px;
+}
+
+
+/* v142 retained last-good row marker is intentionally subtle */
+.trader-row.last-good-row {
+  border-color: rgba(32,228,151,.10);
+}
+
+
+/* v144 FatBot Vault builder */
+.locked-vault-slot {
+  position: relative;
+  cursor: not-allowed;
+  filter: blur(.25px) grayscale(.15);
+  opacity: .58;
+  overflow: hidden;
+}
+.locked-vault-slot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(2.5px);
+  pointer-events: none;
+}
+.locked-vault-slot > * {
+  position: relative;
+  z-index: 1;
+}
+.locked-vault-slot small {
+  display: block;
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  font-weight: 800;
+}
+.vault-trader-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0 12px;
+}
+.vault-trader-slot-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 16px;
+  background: rgba(255,255,255,.035);
+}
+.vault-trader-input {
+  min-width: 0;
+}
+.add-trader-slot-btn {
+  width: 100%;
+  margin-top: 4px;
+  text-transform: none;
+}
+
+
+/* v145 inline FatBot Vault builder */
+.empty-wallet-slot-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.inline-vault-builder {
+  border: 1px solid rgba(32,228,151,.26);
+  border-radius: 22px;
+  background: rgba(35,29,47,.96);
+  box-shadow: 0 18px 40px rgba(0,0,0,.28);
+  padding: 16px;
+}
+.inline-vault-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.inline-vault-head h3 {
+  margin: 8px 0 4px;
+}
+.inline-vault-head p {
+  margin: 0;
+}
+.inline-vault-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+.dropdown-vault-row {
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+}
+.vault-trader-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.vault-trader-select {
+  width: 100%;
+}
+.locked-vault-slot {
+  min-height: 78px;
+  position: relative;
+  overflow: hidden;
+  opacity: 1;
+  border: 1px dashed rgba(32,228,151,.33);
+  background: rgba(42,58,68,.42);
+}
+.locked-vault-slot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(21,25,35,.38);
+  backdrop-filter: blur(4px);
+  z-index: 0;
+}
+.locked-vault-slot::after {
+  display: none;
+}
+.locked-vault-content {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 34px 42px 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+.locked-vault-content small {
+  grid-column: 4 / 5;
+  display: block;
+  color: #f3ecff;
+  opacity: .95;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+
+/* v146 Vault trader slots: input-only */
+.vault-trader-slot-row {
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+}
+.vault-trader-input {
+  width: 100%;
+}
+
+
+/* v148 locked FatBot Vault slots: visible text + blur */
+.locked-vault-slot {
+  position: relative !important;
+  min-height: 86px !important;
+  padding: 0 !important;
+  border: 1px dashed rgba(32,228,151,.38) !important;
+  background: rgba(35,52,61,.52) !important;
+  overflow: hidden !important;
+  cursor: not-allowed !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+.locked-vault-slot .locked-vault-blur-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    linear-gradient(135deg, rgba(32,228,151,.12), rgba(139,93,255,.10)),
+    rgba(30,43,52,.72);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+.locked-vault-slot::before {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  z-index: 1;
+  background: rgba(14,18,26,.30);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+.locked-vault-slot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255,255,255,.035) 0,
+    rgba(255,255,255,.035) 1px,
+    transparent 1px,
+    transparent 8px
+  );
+  pointer-events: none;
+  display: block !important;
+}
+.locked-vault-content {
+  position: relative !important;
+  z-index: 3 !important;
+  width: 100%;
+  min-height: 86px;
+  display: grid !important;
+  grid-template-columns: 34px 34px minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 14px 16px !important;
+  color: #fff !important;
+}
+.locked-vault-lock {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.10);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+  font-size: 16px;
+}
+.locked-vault-message {
+  min-width: 0;
+}
+.locked-vault-message strong {
+  display: block;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.15;
+  margin-bottom: 5px;
+}
+.locked-vault-message small {
+  display: block !important;
+  color: #f4efff !important;
+  opacity: 1 !important;
+  font-size: 12px !important;
+  font-weight: 900 !important;
+  line-height: 1.3 !important;
+  max-width: none !important;
+}
+
+
+/* v149 locked FatBot Vault slot text across the whole slot */
+.locked-vault-content {
+  grid-template-columns: 34px 34px minmax(0, 1fr) !important;
+  width: 100% !important;
+}
+.locked-vault-message {
+  min-width: 0 !important;
+  width: 100% !important;
+}
+.locked-vault-message strong {
+  display: none !important;
+}
+.locked-vault-message small {
+  display: block !important;
+  width: 100% !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  color: #f8f3ff !important;
+  font-size: 13px !important;
+  font-weight: 950 !important;
+  line-height: 1 !important;
+  letter-spacing: .01em !important;
+}
+@media (max-width: 760px) {
+  .locked-vault-message small {
+    font-size: 11px !important;
+  }
+}
+
+
+/* v150 hard override: visible locked-slot unlock sentence across full row */
+.locked-vault-slot {
+  position: relative !important;
+}
+.locked-vault-content {
+  position: relative !important;
+  z-index: 5 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  width: 100% !important;
+  min-height: 86px !important;
+  padding: 14px 18px !important;
+}
+.locked-vault-content .slot-index,
+.locked-vault-content .locked-vault-lock {
+  flex: 0 0 auto !important;
+}
+.locked-vault-message {
+  display: block !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  color: #ffffff !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  font-size: 13px !important;
+  font-weight: 950 !important;
+  line-height: 1.15 !important;
+  letter-spacing: .01em !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  text-align: left !important;
+  text-shadow: 0 1px 10px rgba(0,0,0,.55) !important;
+}
+.locked-vault-message small,
+.locked-vault-message strong {
+  display: none !important;
+}
+
+
+/* v151 Default FatBot Vault modal */
+.default-fatbot-vault-row {
+  border-color: rgba(32,228,151,.28);
+  box-shadow: 0 0 0 1px rgba(32,228,151,.06);
+}
+.vault-modal-head {
+  align-items: flex-start;
+}
+.vault-modal-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.06);
+}
+.vault-modal-tab {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 14px;
+  color: rgba(255,255,255,.76);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .02em;
+  cursor: pointer;
+}
+.vault-modal-tab.active {
+  color: #fff;
+  background: linear-gradient(135deg, #7c4dff, #20e497);
+  box-shadow: 0 10px 22px rgba(124,77,255,.28);
+}
+.profile-detail-grid {
+  margin-top: 16px;
+}
+.positions-heading {
+  margin-top: 18px;
+}
+.profile-position-row {
+  grid-template-columns: 52px minmax(100px, 1.2fr) repeat(5, minmax(90px, 1fr));
+}
+.vault-management-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.vault-management-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.vault-management-row {
+  display: grid;
+  grid-template-columns: 52px minmax(180px, 1.4fr) repeat(3, minmax(100px, .8fr)) 42px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 18px;
+  background: rgba(255,255,255,.035);
+}
+.vault-management-main {
+  min-width: 0;
+}
+.vault-trash-btn {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255,101,127,.15);
+  color: #ff657f;
+  cursor: pointer;
+  font-size: 15px;
+}
+.vault-trash-btn:hover {
+  background: rgba(255,101,127,.28);
+}
+.vault-management-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+.vault-management-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+@media (max-width: 900px) {
+  .vault-modal-head {
+    flex-direction: column;
+  }
+  .vault-management-row,
+  .profile-position-row {
+    grid-template-columns: 1fr;
+  }
+  .vault-management-add {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v152 default vault modal fast fallback */
+.vault-live-warning {
+  margin-bottom: 12px;
+  border-color: rgba(255,214,64,.18);
+  color: rgba(255,255,255,.78);
+}
+
+
+/* v153 Wallet Management 30D chart preview */
+.vault-management-row {
+  grid-template-columns: 52px minmax(180px, 1.25fr) repeat(3, minmax(92px, .72fr)) minmax(120px, .82fr) 42px !important;
+}
+.vault-management-chart {
+  min-width: 120px;
+}
+.vault-management-chart .sparkline-wrap {
+  width: 120px;
+  max-width: 120px;
+}
+.vault-management-chart .sparkline-wrap svg {
+  width: 120px;
+}
+.vault-management-chart .sparkline-empty {
+  width: 120px;
+  text-align: left;
+}
+@media (max-width: 900px) {
+  .vault-management-row {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+
+/* v154 vault chart loading fallback */
+.profile-chart-empty {
+  min-height: 120px;
+}
+
+
+/* v156 VAULT STATS: same 3x3 card grid as single wallet profile */
+.vault-stats-grid-3x3 {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  margin-top: 16px !important;
+}
+.vault-stats-grid-3x3 .detail-card {
+  min-height: 74px;
+}
+@media (max-width: 900px) {
+  .vault-stats-grid-3x3 {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+
+/* v157 force VAULT STATS into 3 columns x 3 rows */
+#defaultVaultModalBody .vault-stats-grid-3x3 {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  grid-auto-flow: row !important;
+  gap: 12px !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin-top: 16px !important;
+}
+#defaultVaultModalBody .vault-stats-grid-3x3 .detail-card {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  min-height: 74px !important;
+  box-sizing: border-box !important;
+}
+@media (max-width: 760px) {
+  #defaultVaultModalBody .vault-stats-grid-3x3 {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+
+/* v158 unify Wallet Management tab size with Vault Stats tab for one consistent modal flow */
+#traderModal .modal-card.default-vault-modal-card {
+  width: min(1040px, 96vw) !important;
+}
+#defaultVaultModalBody {
+  min-height: 980px;
+}
+#defaultVaultModalBody .vault-management-panel,
+#defaultVaultModalBody .single-wallet-profile,
+#defaultVaultModalBody .default-vault-stats-panel {
+  min-height: 980px;
+}
+@media (max-width: 1100px) {
+  #defaultVaultModalBody,
+  #defaultVaultModalBody .vault-management-panel,
+  #defaultVaultModalBody .single-wallet-profile,
+  #defaultVaultModalBody .default-vault-stats-panel {
+    min-height: 880px;
+  }
+}
+@media (max-width: 760px) {
+  #defaultVaultModalBody,
+  #defaultVaultModalBody .vault-management-panel,
+  #defaultVaultModalBody .single-wallet-profile,
+  #defaultVaultModalBody .default-vault-stats-panel {
+    min-height: auto;
+  }
+}
+
+
+/* v159 all vault cards use modal flow + 7D mini chart instead of drift */
+.wallet-row.vault-wallet-row {
+  grid-template-columns: 42px 40px minmax(0,1.18fr) minmax(96px,.58fr) minmax(96px,.58fr) minmax(82px,.46fr) minmax(126px,.8fr) 34px;
+  gap: 10px;
+  padding: 12px 14px;
+  align-items: center;
+}
+.wallet-row.vault-wallet-row .slot-index {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+.wallet-row.vault-wallet-row .copy-wallet-logo {
+  width: 32px;
+  height: 32px;
+}
+.wallet-row.vault-wallet-row .vault-row-chart-col {
+  min-width: 0;
+}
+.wallet-row.vault-wallet-row .vault-row-chart-col .row-sub {
+  margin-bottom: 4px;
+}
+.wallet-row.vault-wallet-row .sparkline-wrap {
+  max-width: 118px;
+}
+@media (max-width: 1100px) {
+  .wallet-row.vault-wallet-row {
+    grid-template-columns: 42px 40px minmax(0,1.1fr) minmax(88px,.56fr) minmax(88px,.56fr) minmax(74px,.42fr) minmax(110px,.72fr) 34px;
+    gap: 8px;
+  }
+}
+@media (max-width: 900px) {
+  .wallet-row.vault-wallet-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v160 FatBot Vaults top-right hero: How it Works carousel */
+.how-it-works-wrap {
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+}
+.how-it-works-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 62px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(139,93,255,.12), rgba(48,236,182,.10));
+  border: 1px solid rgba(255,255,255,.06);
+}
+.how-it-works-step {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(135deg, var(--purple), #30ecb6);
+  box-shadow: 0 10px 28px rgba(139,93,255,.26);
+}
+.how-it-works-text {
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 800;
+  color: #f6f1ff;
+}
+.how-it-works-dots {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.how-it-works-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.18);
+  transition: transform .18s ease, background .18s ease, width .18s ease;
+}
+.how-it-works-dot.active {
+  width: 22px;
+  background: linear-gradient(90deg, var(--purple), #30ecb6);
+}
+@media (max-width: 900px) {
+  .how-it-works-wrap { min-height: auto; }
+  .how-it-works-line { align-items: flex-start; }
+  .how-it-works-text { font-size: 16px; }
+}
+
+
+/* v161 vault row status dot + wallet management dual actions */
+.vault-status-dot-wrap {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.06);
+}
+.vault-status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+  background: rgba(255,255,255,.35);
+}
+.vault-status-dot.active {
+  background: #20e497;
+  box-shadow: 0 0 0 rgba(32,228,151,.45);
+  animation: vaultPulse 1.6s ease-in-out infinite;
+}
+.vault-status-dot.generated,
+.vault-status-dot.paper,
+.vault-status-dot.paused {
+  background: #b9abc8;
+}
+.vault-status-dot-wrap.active {
+  background: rgba(32,228,151,.08);
+  border-color: rgba(32,228,151,.18);
+}
+@keyframes vaultPulse {
+  0% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(32,228,151,.42); }
+  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(32,228,151,0); }
+  100% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(32,228,151,0); }
+}
+.vault-management-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.default-vault-stats-panel .position-row strong,
+.default-vault-stats-panel .profile-position-row strong,
+.default-vault-stats-panel .trader-live-position-row strong {
+  word-break: break-word;
+}
+
+
+/* v164 styled Close Vault dialog */
+.danger-pill {
+  background: rgba(255,101,127,.18) !important;
+  color: #ff7c91 !important;
+}
+.vault-close-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 6, 14, .62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.vault-close-dialog {
+  width: min(560px, 96vw);
+  border-radius: 24px;
+  padding: 22px;
+  background: linear-gradient(180deg, rgba(49,40,63,.98), rgba(31,24,42,.98));
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 28px 90px rgba(0,0,0,.48);
+}
+.vault-close-dialog-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+.vault-close-dialog-head h3 {
+  margin: 8px 0 6px;
+  font-size: 22px;
+}
+.vault-close-dialog-head p {
+  margin: 0;
+}
+.form-label {
+  display: block;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.vault-close-warning {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255,101,127,.10);
+  border: 1px solid rgba(255,101,127,.18);
+  color: #ffc6d0;
+  font-size: 12px;
+  font-weight: 800;
+}
+.vault-close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+
+/* v168 Close Vault two-step confirmation */
+.vault-close-warning.armed {
+  background: rgba(255,73,110,.16);
+  border-color: rgba(255,73,110,.42);
+  color: #ffd6de;
+}
+.vault-close-dialog .danger-btn:focus {
+  outline: 2px solid rgba(255,101,127,.55);
+  outline-offset: 3px;
+}
+
+
+/* v169 Single Copytrading modal flow */
+#traderModal .modal-card.single-copy-modal-card {
+  width: min(1040px, 96vw) !important;
+}
+.single-copy-modal-head {
+  align-items: flex-start;
+}
+.single-copy-header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.single-copy-header-row h2 {
+  margin: 0;
+}
+.single-copy-header-row p {
+  margin: 4px 0 0;
+}
+.single-copy-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+}
+.single-copy-position-list {
+  margin-top: 8px;
+}
+.single-copy-position-row {
+  grid-template-columns: 40px minmax(110px,1fr) repeat(4, minmax(90px,.72fr));
+}
+.single-copy-close-dialog .vault-close-dialog-head h3 {
+  margin-top: 8px;
+}
+@media (max-width: 900px) {
+  .single-copy-modal-head {
+    flex-direction: column;
+  }
+  .single-copy-detail-grid,
+  .single-copy-position-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v170 model single copy slot */
+.model-single-copy-row {
+  border-color: rgba(32,228,151,.34);
+  box-shadow: 0 0 0 1px rgba(32,228,151,.08);
+}
+.model-single-copy-row .row-title::after {
+  content: "MODEL";
+  display: inline-flex;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(32,228,151,.14);
+  color: #20e497;
+  font-size: 9px;
+  font-weight: 950;
+  vertical-align: middle;
+}

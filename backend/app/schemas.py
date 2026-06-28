@@ -45,5 +45,5 @@ class WalletSettingsPatch(BaseModel):
 class PoolCreate(BaseModel):
     name: str = "Pool Copy Wallet"
     vault_name: Optional[str] = None
-    trader_addresses: List[str] = Field(min_length=2, max_length=5)
+    trader_addresses: List[str] = Field(min_length=3, max_length=10)
     multiplier: float = Field(default=1.0, ge=0.1, le=10)
